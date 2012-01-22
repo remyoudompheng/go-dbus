@@ -9,6 +9,7 @@ GOFILES=\
 	matchrule.go\
 	auth.go\
 	marshall.go\
+	rawmessage.go \
 	message.go\
 	introspect.go\
 	dbus.go
