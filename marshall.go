@@ -127,7 +127,7 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 		_AppendDouble(buff, val.(float64))
 		sigOffset = 1
 
-	case 'a': // ary
+	case Array: // ary
 		sigBlock, _ := _GetSigBlock(sig, 1)
 		_AppendArray(buff, 1, func(b *bytes.Buffer) {
 			if slice, ok := val.([]interface{}); ok && slice != nil {
@@ -138,7 +138,7 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 		})
 		sigOffset = 1 + len(sigBlock)
 
-	case '(': // struct FIXME: nested struct not support
+	case StructBegin: // struct FIXME: nested struct not support
 		_AppendAlign(8, buff)
 		structSig, _ := _GetStructSig(sig, 0)
 		for i, s := range structSig {
@@ -146,7 +146,7 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 		}
 		sigOffset = 2 + len(structSig)
 
-	case '{':
+	case DictBegin:
 		_AppendAlign(8, buff)
 		dictSig, _ := _GetDictSig(sig, 0)
 		for i, s := range dictSig {
