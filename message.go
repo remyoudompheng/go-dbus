@@ -76,7 +76,7 @@ func NewMessage() *Message {
 	return msg
 }
 
-func (p *Message) _BufferToMessage(buff []byte) (int, error) {
+func (p *Message) _RawToMessage(buff []byte) (int, error) {
 	slice, bufIdx, e := Parse(buff, "yyyyuua(yv)", 0)
 	if e != nil {
 		return 0, e
@@ -121,9 +121,9 @@ func (p *Message) _BufferToMessage(buff []byte) (int, error) {
 	return idx, nil
 }
 
-func _Unmarshal(buff []byte) (*Message, int, error) {
+func _Unmarshal(rm *rawMessage) (*Message, int, error) {
 	msg := NewMessage()
-	idx, e := msg._BufferToMessage(buff)
+	idx, e := msg._RawToMessage(rm.Msg)
 	if e != nil {
 		return nil, 0, e
 	}

@@ -1,12 +1,13 @@
 package dbus
 
 import (
-	"bytes"
+//	"bytes"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"container/list"
 )
 
 type StandardBus int
@@ -106,7 +107,9 @@ type Connection struct {
 	methodCallReplies map[uint32](func(msg *Message))
 	signalMatchRules  []signalHandler
 	conn              net.Conn
-	buffer            *bytes.Buffer
+	headerBuf		  []byte
+	inMsgQueue		  *list.List
+	outMsgQueue 	  *list.List
 	proxy             *Interface
 }
 
@@ -198,7 +201,10 @@ func Connect(busType StandardBus) (*Connection, error) {
 	bus.methodCallReplies = make(map[uint32]func(*Message))
 	bus.signalMatchRules = make([]signalHandler, 0)
 	bus.proxy = bus._GetProxy()
-	bus.buffer = bytes.NewBuffer([]byte{})
+	bus.headerBuf = make([]byte, MinimumHeaderSize)
+	bus.inMsgQueue = list.New()
+	bus.outMsgQueue = list.New()
+	//bus.buffer = bytes.NewBuffer([]byte{})
 	return bus, nil
 }
 
@@ -213,11 +219,10 @@ func (p *Connection) Authenticate() error {
 
 func (p *Connection) _MessageReceiver(msgChan chan *Message) {
 	for {
-		p._FillBuffer()
+		p._GetInData()
 		msg, e := p._PopMessage()
 		if e == nil {
 			msgChan <- msg
-			continue // might be another msg in p.buffer
 		}
 	}
 }
@@ -257,36 +262,46 @@ func (p *Connection) _MessageDispatch(msg *Message) {
 }
 
 func (p *Connection) _PopMessage() (*Message, error) {
-	msg, _, err := _Unmarshal(p.buffer.Bytes())
+	if p.inMsgQueue.Len() == 0 {
+		return nil, errors.New("No messages")
+	}
+
+	link := p.inMsgQueue.Front()
+	rm := link.Value.(*rawMessage)
+	p.inMsgQueue.Remove(link)
+
+	msg, _, err := _Unmarshal(rm)
 	if err != nil {
 		return nil, err
 	}
-	//	p.buffer.Read(make([]byte, n)) // remove first n bytes
-	p.buffer.Reset()
 	return msg, nil
 }
 
-func (p *Connection) _FillBuffer() error {
-	// Read header signature
-	headSig := make([]byte, 16)
-	n, e := p.conn.Read(headSig)
-	if n != 16 {
-		return e
-	}
-	// Calculate whole message length
-	bodyLength, _ := _GetInt32(headSig, 4)
-	arrayLength, _ := _GetInt32(headSig, 12)
-	headerLen := 16 + int(arrayLength)
-	pad := _Align(8, headerLen) - headerLen
-	restOfMsg := make([]byte, pad+int(arrayLength)+int(bodyLength))
-	n, e = p.conn.Read(restOfMsg)
+func (p *Connection) _GetInData() error {
 
-	if n != len(restOfMsg) {
+	// Read signature (min header size) from net
+	n, e := p.conn.Read(p.headerBuf)
+	if n != MinimumHeaderSize {
 		return e
 	}
 
-	p.buffer.Write(headSig)
-	p.buffer.Write(restOfMsg)
+	// Create new raw message with signature slice initialized
+	rm, e := newRawMessage(p.headerBuf)
+	if e != nil {
+		return e
+	}
+
+	// We have a signature so we request the rest of the message slice
+	slice := rm.FieldsAndBodySlice()
+
+	n, e = p.conn.Read(slice)
+	if n != len(slice) {
+		return e
+	}
+
+	// Append raw message to incoming message queue
+	p.inMsgQueue.PushBack(rm)
+
 	return e
 }
 

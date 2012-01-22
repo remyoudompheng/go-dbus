@@ -5,8 +5,10 @@ import "testing"
 func TestUnmarshal(t *testing.T) {
 
 	teststr := "l\x01\x00\x01\x00\x00\x00\x00\x01\x00\x00\x00m\x00\x00\x00\x01\x01o\x00\x15\x00\x00\x00/org/freedesktop/DBus\x00\x00\x00\x02\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00\x03\x01s\x00\x05\x00\x00\x00Hello\x00\x00\x00\x06\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00"
+	rawMsg := &rawMessage{}
+	rawMsg.Msg = []byte(teststr)
 
-	msg, _, e := _Unmarshal([]byte(teststr))
+	msg, _, e := _Unmarshal(rawMsg)
 	if nil != e {
 		t.Error("Unmarshal Failed")
 	}
