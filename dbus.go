@@ -1,13 +1,13 @@
 package dbus
 
 import (
-//	"bytes"
+	//	"bytes"
+	"container/list"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
-	"container/list"
 )
 
 type StandardBus int
@@ -107,9 +107,9 @@ type Connection struct {
 	methodCallReplies map[uint32](func(msg *Message))
 	signalMatchRules  []signalHandler
 	conn              net.Conn
-	headerBuf		  []byte
-	inMsgQueue		  *list.List
-	outMsgQueue 	  *list.List
+	headerBuf         []byte
+	inMsgQueue        *list.List
+	outMsgQueue       *list.List
 	proxy             *Interface
 }
 

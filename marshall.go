@@ -95,35 +95,35 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 	e = nil
 
 	switch sig[0] {
-	case Byte: 
+	case Byte:
 		_AppendByte(buff, val.(byte))
 		sigOffset = 1
 
-	case String: 
+	case String:
 		_AppendString(buff, val.(string))
 		sigOffset = 1
 
-	case Boolean: 
+	case Boolean:
 		_AppendBoolean(buff, val.(bool))
 		sigOffset = 1
 
-	case UInt32: 
+	case UInt32:
 		_AppendUInt32(buff, val.(uint32))
 		sigOffset = 1
 
-	case Int32: 
+	case Int32:
 		_AppendInt32(buff, val.(int32))
 		sigOffset = 1
 
-	case Int64: 
+	case Int64:
 		_AppendInt64(buff, val.(int64))
 		sigOffset = 1
 
-	case UInt64: 
+	case UInt64:
 		_AppendUInt64(buff, val.(uint64))
 		sigOffset = 1
 
-	case Double: 
+	case Double:
 		_AppendDouble(buff, val.(float64))
 		sigOffset = 1
 

@@ -48,7 +48,7 @@ type Message struct {
 	serial      int
 	replySerial uint32
 	ErrorName   string
-	Sender		string
+	Sender      string
 }
 
 var serialMutex sync.Mutex
