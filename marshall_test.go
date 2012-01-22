@@ -62,12 +62,12 @@ func TestAppendByte(t *testing.T) {
 
 func TestAppendUint32(t *testing.T) {
 	buff := bytes.NewBuffer([]byte{})
-	_AppendUint32(buff, 1)
+	_AppendUInt32(buff, 1)
 	if !bytes.Equal([]byte("\x01\x00\x00\x00"), buff.Bytes()) {
 		t.Error("#1 Failed")
 	}
 	_AppendByte(buff, 2)
-	_AppendUint32(buff, 0xffffffff)
+	_AppendUInt32(buff, 0xffffffff)
 	if !bytes.Equal([]byte("\x01\x00\x00\x00\x02\x00\x00\x00\xff\xff\xff\xff"), buff.Bytes()) {
 		t.Error("#2 Failed")
 	}

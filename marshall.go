@@ -42,7 +42,15 @@ func _AppendSignature(buff *bytes.Buffer, sig string) {
 
 func _AppendByte(buff *bytes.Buffer, b byte) { binary.Write(buff, binary.LittleEndian, b) }
 
-func _AppendUint32(buff *bytes.Buffer, ui uint32) {
+func _AppendBoolean(buff *bytes.Buffer, b bool) {
+	var val uint32 = 0
+	if b {
+		val = 1
+	}
+	_AppendUInt32(buff, val)
+}
+
+func _AppendUInt32(buff *bytes.Buffer, ui uint32) {
 	_AppendAlign(4, buff)
 	binary.Write(buff, binary.LittleEndian, ui)
 }
@@ -50,6 +58,21 @@ func _AppendUint32(buff *bytes.Buffer, ui uint32) {
 func _AppendInt32(buff *bytes.Buffer, i int32) {
 	_AppendAlign(4, buff)
 	binary.Write(buff, binary.LittleEndian, i)
+}
+
+func _AppendInt64(buff *bytes.Buffer, i int64) {
+	_AppendAlign(8, buff)
+	binary.Write(buff, binary.LittleEndian, i)
+}
+
+func _AppendUInt64(buff *bytes.Buffer, u uint64) {
+	_AppendAlign(8, buff)
+	binary.Write(buff, binary.LittleEndian, u)
+}
+
+func _AppendDouble(buff *bytes.Buffer, f float64) {
+	_AppendAlign(8, buff)
+	binary.Write(buff, binary.LittleEndian, f)
 }
 
 func _AppendArray(buff *bytes.Buffer, align int, proc func(b *bytes.Buffer)) {
@@ -72,20 +95,36 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 	e = nil
 
 	switch sig[0] {
-	case 'y': // byte
+	case Byte: 
 		_AppendByte(buff, val.(byte))
 		sigOffset = 1
 
-	case 's': // string
+	case String: 
 		_AppendString(buff, val.(string))
 		sigOffset = 1
 
-	case 'u': // uint32
-		_AppendUint32(buff, val.(uint32))
+	case Boolean: 
+		_AppendBoolean(buff, val.(bool))
 		sigOffset = 1
 
-	case 'i': // int32
+	case UInt32: 
+		_AppendUInt32(buff, val.(uint32))
+		sigOffset = 1
+
+	case Int32: 
 		_AppendInt32(buff, val.(int32))
+		sigOffset = 1
+
+	case Int64: 
+		_AppendInt64(buff, val.(int64))
+		sigOffset = 1
+
+	case UInt64: 
+		_AppendUInt64(buff, val.(uint64))
+		sigOffset = 1
+
+	case Double: 
+		_AppendDouble(buff, val.(float64))
 		sigOffset = 1
 
 	case 'a': // ary
@@ -208,11 +247,11 @@ func _GetUInt64(buff []byte, index int) (uint64, error) {
 	return u, nil
 }
 
-func _GetDouble(buff []byte, index int) (int64, error) {
+func _GetDouble(buff []byte, index int) (float64, error) {
 	if len(buff) <= index+8-1 {
 		return 0, errors.New("Index error")
 	}
-	var d int64
+	var d float64
 	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &d)
 	if e != nil {
 		return 0, e

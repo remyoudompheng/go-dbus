@@ -139,8 +139,8 @@ func (p *Message) _Marshal() ([]byte, error) {
 
 	tmpBuff := bytes.NewBuffer([]byte{})
 	_AppendParamsData(tmpBuff, p.Sig, p.Params)
-	_AppendUint32(buff, uint32(len(tmpBuff.Bytes())))
-	_AppendUint32(buff, uint32(p.serial))
+	_AppendUInt32(buff, uint32(len(tmpBuff.Bytes())))
+	_AppendUInt32(buff, uint32(p.serial))
 
 	_AppendArray(buff, 1,
 		func(b *bytes.Buffer) {
@@ -177,7 +177,7 @@ func (p *Message) _Marshal() ([]byte, error) {
 				_AppendByte(b, 1) // signature size
 				_AppendByte(b, 'u')
 				_AppendByte(b, 0)
-				_AppendUint32(b, uint32(p.replySerial))
+				_AppendUInt32(b, uint32(p.replySerial))
 			}
 
 			if p.Dest != "" {
