@@ -48,7 +48,7 @@ type Message struct {
 	serial      int
 	replySerial uint32
 	ErrorName   string
-	//	Sender;
+	Sender		string
 }
 
 var serialMutex sync.Mutex
@@ -95,21 +95,21 @@ func (p *Message) _RawToMessage(buff []byte) (int, error) {
 			val := tmpSlice[1]
 
 			switch t {
-			case 1:
+			case HeaderFieldPath:
 				p.Path = val.(string)
-			case 2:
+			case HeaderFieldInterface:
 				p.Iface = val.(string)
-			case 3:
+			case HeaderFieldMember:
 				p.Member = val.(string)
-			case 4:
+			case HeaderFieldErrorName:
 				p.ErrorName = val.(string)
-			case 5:
+			case HeaderFieldReplySerial:
 				p.replySerial = val.(uint32)
-			case 6:
+			case HeaderFieldDestination:
 				p.Dest = val.(string)
-			case 7:
-				// FIXME
-			case 8:
+			case HeaderFieldSender:
+				p.Sender = val.(string)
+			case HeaderFieldSignature:
 				p.Sig = val.(string)
 			}
 		}
