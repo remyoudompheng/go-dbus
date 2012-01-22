@@ -15,10 +15,10 @@ const (
 const (
 	HeaderFieldInvalid = iota
 	HeaderFieldPath
-	HeadeFieldInterface
+	HeaderFieldInterface
 	HeaderFieldMember
 	HeaderFieldErrorName
-	HeaderFieldReplaySerial
+	HeaderFieldReplySerial
 	HeaderFieldDestination
 	HeaderFieldSender
 	HeaderFieldSignature
