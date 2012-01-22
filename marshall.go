@@ -184,6 +184,30 @@ func _GetUint32(buff []byte, index int) (uint32, error) {
 	return u, nil
 }
 
+func _GetInt64(buff []byte, index int) (int64, error) {
+	if len(buff) <= index+8-1 {
+		return 0, errors.New("Index error")
+	}
+	var i int64
+	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &i)
+	if e != nil {
+		return 0, e
+	}
+	return i, nil
+}
+
+func _GetUInt64(buff []byte, index int) (uint64, error) {
+	if len(buff) <= index+8-1 {
+		return 0, errors.New("Index error")
+	}
+	var u uint64
+	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &u)
+	if e != nil {
+		return 0, e
+	}
+	return u, nil
+}
+
 func _GetBoolean(buff []byte, index int) (bool, error) {
 	if len(buff) <= index+4-1 {
 		return false, errors.New("index error")
@@ -279,8 +303,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 	bufIdx = index
 	for sigIdx := 0; sigIdx < len(sig); {
 		switch sig[sigIdx] {
-		case 'b': // bool
-			bufIdx = _Align(4, bufIdx)
+		case Boolean: // bool
+			bufIdx = _Align(alignment[Boolean], bufIdx)
 			b, e := _GetBoolean(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -290,7 +314,7 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += 4
 			sigIdx++
 
-		case 'y': // byte
+		case Byte: // byte
 			v, e := _GetByte(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -300,8 +324,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx++
 			sigIdx++
 
-		case 'n': // int16
-			bufIdx = _Align(2, bufIdx)
+		case Int16: // int16
+			bufIdx = _Align(alignment[Int16], bufIdx)
 			n, e := _GetInt16(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -311,8 +335,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += 2
 			sigIdx++
 
-		case 'q': // uint16
-			bufIdx = _Align(2, bufIdx)
+		case UInt16: // uint16
+			bufIdx = _Align(alignment[UInt16], bufIdx)
 			q, e := _GetUint16(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -322,8 +346,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += 2
 			sigIdx++
 
-		case 'u': // uint32
-			bufIdx = _Align(4, bufIdx)
+		case UInt32: // uint32
+			bufIdx = _Align(alignment[UInt32], bufIdx)
 			u, e := _GetUint32(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -333,8 +357,30 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += 4
 			sigIdx++
 
-		case 's', 'o': // string, object
-			bufIdx = _Align(4, bufIdx)
+		case Int64:
+			bufIdx = _Align(alignment[Int64], bufIdx)
+			n, e := _GetInt64(buff, bufIdx)
+			if e != nil {
+				err = e
+				return
+			}
+			slice = append(slice, n)
+			bufIdx += 8
+			sigIdx++
+
+		case UInt64:
+			bufIdx = _Align(alignment[UInt64], bufIdx)
+			n, e := _GetUInt64(buff, bufIdx)
+			if e != nil {
+				err = e
+				return
+			}
+			slice = append(slice, n)
+			bufIdx += 8
+			sigIdx++
+
+		case String, ObjectPath: // string, object
+			bufIdx = _Align(alignment[String], bufIdx)
 
 			size, e := _GetInt32(buff, bufIdx)
 			if e != nil {
@@ -351,7 +397,7 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += (4 + int(size) + 1)
 			sigIdx++
 
-		case 'g': // signature
+		case Signature: // signature
 			size, e := _GetByte(buff, bufIdx)
 			if e != nil {
 				err = e
@@ -367,8 +413,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx += (1 + int(size) + 1)
 			sigIdx++
 
-		case 'a': // array
-			startIdx := _Align(4, bufIdx)
+		case Array: // array
+			startIdx := _Align(alignment[Array], bufIdx)
 			arySize, e := _GetInt32(buff, startIdx)
 			if e != nil {
 				err = e
@@ -396,8 +442,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			sigIdx += (1 + len(sigBlock))
 			slice = append(slice, tmpSlice)
 
-		case '(': // struct
-			idx := _Align(8, bufIdx)
+		case StructBegin: // struct
+			idx := _Align(alignment[StructBegin], bufIdx)
 			stSig, e := _GetStructSig(sig, sigIdx)
 			if e != nil {
 				err = e
@@ -414,8 +460,8 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			sigIdx += (len(stSig) + 2)
 			slice = append(slice, retSlice)
 
-		case '{': // dict
-			idx := _Align(8, bufIdx)
+		case DictBegin: // dict
+			idx := _Align(alignment[DictBegin], bufIdx)
 			stSig, e := _GetDictSig(sig, sigIdx)
 			if e != nil {
 				err = e
@@ -432,7 +478,7 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			sigIdx += (len(stSig) + 2)
 			slice = append(slice, retSlice)
 
-		case 'v': // variant
+		case Variant: // variant
 			vals, idx, e := _GetVariant(buff, bufIdx)
 			if e != nil {
 				err = e
