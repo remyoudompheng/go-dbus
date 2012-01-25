@@ -76,10 +76,10 @@ func NewMessage() *Message {
 	return msg
 }
 
-func (p *Message) _RawToMessage(rm *rawMessage) (int, error) {
-	slice, bufIdx, e := Parse(rm.Msg, "yyyyuua(yv)", 0)
+func (p *Message) _RawToMessage(rm *rawMessage) error {
+	slice, e := Parse(rm.Header, "yyyyuua(yv)")
 	if e != nil {
-		return 0, e
+		return e
 	}
 
 	p.Type = MessageType(slice[1].(byte))
@@ -114,20 +114,19 @@ func (p *Message) _RawToMessage(rm *rawMessage) (int, error) {
 			}
 		}
 	}
-	idx := _Align(8, bufIdx)
 	if 0 < p.bodyLength {
-		p.Params, idx, _ = Parse(rm.Msg, p.Sig, idx)
+		p.Params, _ = Parse(rm.Body, p.Sig)
 	}
-	return idx, nil
+	return nil
 }
 
-func _Unmarshal(rm *rawMessage) (*Message, int, error) {
+func _Unmarshal(rm *rawMessage) (*Message, error) {
 	msg := NewMessage()
-	idx, e := msg._RawToMessage(rm)
+	e := msg._RawToMessage(rm)
 	if e != nil {
-		return nil, 0, e
+		return nil, e
 	}
-	return msg, idx, nil
+	return msg, nil
 }
 
 func (p *Message) _Marshal() ([]byte, error) {

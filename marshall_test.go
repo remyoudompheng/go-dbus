@@ -131,35 +131,43 @@ func TestAppendValue(t *testing.T) {
 }
 
 func TestGetByte(t *testing.T) {
-	if b, _ := _GetByte([]byte("\x00\x11"), 1); b != 0x11 {
+	it := newIterReader([]byte("\x00\x11"), "yy")
+	b := it.Value().(byte)
+	if b != '\x00' {
 		t.Errorf("#1 Failed 0x%X != 0x11", b)
 	}
-	if _, e := _GetByte([]byte("\x00\x11"), 2); e == nil {
-		t.Errorf("#2 Failed")
+
+	e := it.Next()
+	if e != nil {
+		t.Error("Error ", e.Error())
+	}
+
+	b = it.Value().(byte)
+	if b != 0x11 {
+		t.Error("#2 Failed 0x%X != 0x11", b)
 	}
 }
 
 func TestGetBoolean(t *testing.T) {
-	b, e := _GetBoolean([]byte("\x01\x00\x00\x00"), 0)
-	if e != nil {
-		t.Error("#1-1 Failed")
-	}
-	if true != b {
-		t.Error("#1-2 Failed")
-	}
-	_, e = _GetBoolean([]byte("\x01\x00\x00\x00"), 1)
-	if e == nil {
-		t.Error("#2 Failed")
+	it := newIterReader([]byte("\x01\x00\x00\x00"), string(Boolean))
+
+	b := it.Value().(bool)
+	if b != true {
+		t.Error("#1 Failed %v != true", b)
 	}
 }
 
 func TestGetString(t *testing.T) {
-	s, e := _GetString([]byte("\x00\x00test"), 2, 4)
-	if e != nil || s != "test" {
+	it := newIterReader([]byte("\x04\x00\x00\x00test\x00"), "s")
+	s := it.Value().(string)
+
+	if s != "test" {
 		t.Error("#1 Failed")
 	}
-	s, e = _GetString([]byte("1234"), 3, 1)
-	if e != nil || s != "4" {
+
+	it = newIterReader([]byte("\x04\x00\x00\x001234\x00"), "s")
+	s = it.Value().(string)
+	if s != "1234" {
 		t.Error("#2 Failed")
 	}
 }
@@ -229,17 +237,17 @@ func sliceRef(s []interface{}, arg1 int, args ...int) interface{} {
 }
 
 func TestParse(t *testing.T) {
-	ret, _, _ := Parse([]byte("\x01\x02"), "y", 0)
+	ret, _ := Parse([]byte("\x01\x02"), "y")
 	if !reflect.DeepEqual([]interface{}{byte(1)}, ret) {
 		t.Error("#1 Failed:", ret)
 	}
 
-	ret, _, _ = Parse([]byte("\x03\x00\x00\x00\x04\x00\x00\x00test\x00\x04"), "ysy", 0)
+	ret, _ = Parse([]byte("\x03\x00\x00\x00\x04\x00\x00\x00test\x00\x04"), "ysy")
 	if !reflect.DeepEqual([]interface{}{byte(3), "test", byte(4)}, ret) {
 		t.Error("#1 Failed:", ret)
 	}
 
-	ret, _, _ = Parse([]byte("\x22\x00\x00\x00\x04\x00\x00\x00test\x00\x00\x00\x00\x05\x00\x00\x00test2\x00\x00\x00\x05\x00\x00\x00test3\x00\x01"), "asy", 0)
+	ret, _ = Parse([]byte("\x22\x00\x00\x00\x04\x00\x00\x00test\x00\x00\x00\x00\x05\x00\x00\x00test2\x00\x00\x00\x05\x00\x00\x00test3\x00\x01"), "asy")
 	//	if "test" != ret.At(0).(*vector.Vector).At(0).(string) { t.Error("#3-1 Failed:")}
 	if "test" != sliceRef(ret, 0, 0).(string) {
 		t.Error("#3-1 Failed:")
@@ -254,7 +262,7 @@ func TestParse(t *testing.T) {
 		t.Error("#3-4 Failed:")
 	}
 
-	ret, _, e := Parse([]byte("\x22\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00true\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00false\x00"), "a(bs)", 0)
+	ret, e := Parse([]byte("\x22\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00true\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00false\x00"), "a(bs)")
 	if e != nil {
 		t.Error(e.Error())
 	}
@@ -271,7 +279,7 @@ func TestParse(t *testing.T) {
 		t.Error("#4-4 Failed:")
 	}
 
-	ret, _, _ = Parse([]byte("l\x00\x00\x00\x00\x01\x00\x00test"), "yu", 0)
+	ret, _ = Parse([]byte("l\x00\x00\x00\x00\x01\x00\x00test"), "yu")
 	if 'l' != sliceRef(ret, 0).(byte) {
 		t.Error("#5-1 Failed:")
 	}
@@ -281,37 +289,45 @@ func TestParse(t *testing.T) {
 }
 
 func TestGetVariant(t *testing.T) {
-	val, index, _ := _GetVariant([]byte("\x00\x00\x01s\x00\x00\x00\x00\x04\x00\x00\x00test\x00"), 2)
-	str, ok := val[0].(string)
-	if !ok {
-		t.Error("#1-1 Failed")
-	}
-	if "test" != str {
-		t.Error("#1-2 Failed", str)
-	}
-	if 17 != index {
-		t.Error("#1-3 Failed")
+	it := newIterReader([]byte("\x01s\x00\x00\x04\x00\x00\x00test\x00"), "v")
+	v := it.Value().(string)
+
+	if v != "test" {
+		t.Error("#1 Failed")
 	}
 }
 
 func TestParseVariant(t *testing.T) {
-	vec, _, e := Parse([]byte("\x01s\x00\x00\x04\x00\x00\x00test\x00\x01y\x00\x03\x01u\x00\x04\x00\x00\x00"), "vvv", 0)
-	if nil != e {
+	it := newIterReader([]byte("\x01s\x00\x00\x04\x00\x00\x00test\x00\x01y\x00\x03\x01u\x00\x04\x00\x00\x00"), "vvv")
+	s := it.Value().(string)
+
+	if s != "test" {
 		t.Error("#1 Failed")
 	}
-	if "test" != vec[0].(string) {
-		t.Error("#2 Failed")
+
+	err := it.Next()
+	if err != nil {
+		t.Error("#2-1 Failed:", err.Error())
 	}
-	if 3 != vec[1].(byte) {
-		t.Error("#3 Failed")
+
+	b := it.Value().(byte)
+	if b != 3 {
+		t.Error("#2-2 Failed")
 	}
-	if 4 != vec[2].(uint32) {
-		t.Error("#4 Failed", vec[2].(uint32))
+
+	err = it.Next()
+	if err != nil {
+		t.Error("#3-1 Failed:", err.Error())
+	}
+
+	i := it.Value().(uint32)
+	if i != 4 {
+		t.Error("#3-2 Failed")
 	}
 }
 
 func TestParseNumber(t *testing.T) {
-	vec, _, e := Parse([]byte("\x04\x00\x00\x00"), "u", 0)
+	vec, e := Parse([]byte("\x04\x00\x00\x00"), "u")
 	if nil != e {
 		t.Error("#1 Failed")
 	}
@@ -321,12 +337,11 @@ func TestParseNumber(t *testing.T) {
 }
 
 func TestGetUint32(t *testing.T) {
-	u, e := _GetUint32([]byte("\x04\x00\x00\x00"), 0)
-	if e != nil {
-		t.Error("Failed", e.Error())
-	}
-	if uint32(4) != u {
-		t.Error("#1 Failed", u)
+	it := newIterReader([]byte("\x04\x00\x00\x00"), "u")
+	u := it.Value().(uint32)
+
+	if u != 4 {
+		t.Error("Failed: %v != 4", u)
 	}
 }
 

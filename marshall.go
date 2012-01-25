@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -167,38 +166,12 @@ func _AppendParamsData(buff *bytes.Buffer, sig string, params []interface{}) {
 		sigOffset += offset
 	}
 }
-
 func _GetByte(buff []byte, index int) (byte, error) {
 	if len(buff) <= index {
 		return 0, errors.New("index error")
 	}
 	return buff[index], nil
 }
-
-func _GetInt16(buff []byte, index int) (int16, error) {
-	if len(buff) <= index+2-1 {
-		return 0, errors.New("index error")
-	}
-	var n int16
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &n)
-	if e != nil {
-		return 0, e
-	}
-	return n, nil
-}
-
-func _GetUint16(buff []byte, index int) (uint16, error) {
-	if len(buff) <= index+2-1 {
-		return 0, errors.New("index error")
-	}
-	var q uint16
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &q)
-	if e != nil {
-		return 0, e
-	}
-	return q, nil
-}
-
 func _GetInt32(buff []byte, index int) (int32, error) {
 	if len(buff) <= index+4-1 {
 		return 0, errors.New("index error")
@@ -210,74 +183,6 @@ func _GetInt32(buff []byte, index int) (int32, error) {
 	}
 	return l, nil
 }
-
-func _GetUint32(buff []byte, index int) (uint32, error) {
-	if len(buff) <= index+4-1 {
-		return 0, errors.New("index error")
-	}
-	var u uint32
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &u)
-	if e != nil {
-		return 0, e
-	}
-	return u, nil
-}
-
-func _GetInt64(buff []byte, index int) (int64, error) {
-	if len(buff) <= index+8-1 {
-		return 0, errors.New("Index error")
-	}
-	var i int64
-	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &i)
-	if e != nil {
-		return 0, e
-	}
-	return i, nil
-}
-
-func _GetUInt64(buff []byte, index int) (uint64, error) {
-	if len(buff) <= index+8-1 {
-		return 0, errors.New("Index error")
-	}
-	var u uint64
-	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &u)
-	if e != nil {
-		return 0, e
-	}
-	return u, nil
-}
-
-func _GetDouble(buff []byte, index int) (float64, error) {
-	if len(buff) <= index+8-1 {
-		return 0, errors.New("Index error")
-	}
-	var d float64
-	e := binary.Read(bytes.NewBuffer(buff[index:]), binary.LittleEndian, &d)
-	if e != nil {
-		return 0, e
-	}
-	return d, nil
-}
-
-func _GetBoolean(buff []byte, index int) (bool, error) {
-	if len(buff) <= index+4-1 {
-		return false, errors.New("index error")
-	}
-	var v int32
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &v)
-	if e != nil {
-		return false, e
-	}
-	return 0 != v, nil
-}
-
-func _GetString(buff []byte, index int, size int) (string, error) {
-	if len(buff) <= (index + size - 1) {
-		return "", errors.New("index error")
-	}
-	return string(buff[index : index+size]), nil
-}
-
 func _GetStructSig(sig string, startIdx int) (string, error) {
 	if len(sig) <= startIdx || '(' != sig[startIdx] {
 		return "<nil>", errors.New("index error")
@@ -340,221 +245,542 @@ func _GetSigBlock(sig string, index int) (string, error) {
 	return sig[index : index+1], nil
 }
 
-func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e error) {
-	retidx = index
-	sigSize := int(buff[retidx])
-	retidx++
-	sig := string(buff[retidx : retidx+sigSize])
-	vals, retidx, e = Parse(buff, sig, retidx+sigSize+1)
-	return
+// EOM error is returned when iter is at the end
+type EOM string
+
+func (self EOM) Error() string {
+	return "EOM"
 }
 
-func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int, err error) {
-	slice = make([]interface{}, 0)
-	bufIdx = index
-	for sigIdx := 0; sigIdx < len(sig); {
-		switch sig[sigIdx] {
-		case Boolean: // bool
-			bufIdx = _Align(alignment[Boolean], bufIdx)
-			b, e := _GetBoolean(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
+// iterReader
+type iterReader struct {
+	data                      []byte
+	signature                 string
+	offset, sigOffset         int
+	subReader                 *iterReader
+	nextOffset, nextSigOffset int
+	currValue                 interface{}
+}
+
+func newIterReader(data []byte, signature string) *iterReader {
+	ir := &iterReader{}
+	ir.data = data
+	ir.signature = signature
+	ir.offset = 0
+	ir.sigOffset = 0
+
+	if err := ir.Reinit(); err != nil {
+		return nil
+	}
+
+	return ir
+}
+
+func newIterReaderWithOffsets(data []byte, signature string, offset, sigOffset int) *iterReader {
+	ir := &iterReader{}
+	ir.data = data
+	ir.signature = signature
+	ir.offset = offset
+	ir.sigOffset = sigOffset
+
+	if err := ir.Reinit(); err != nil {
+		return nil
+	}
+
+	return ir
+}
+
+// Resets offset variables
+func (self *iterReader) Reset() {
+	self.offset = 0
+	self.sigOffset = 0
+}
+
+func (self *iterReader) GetOffset() int {
+	return self.offset
+}
+
+func (self *iterReader) GetSigOffset() int {
+	return self.sigOffset
+}
+
+func (self *iterReader) GetSignature() string {
+	return self.signature
+}
+
+func (self *iterReader) GetCurrentType() byte {
+	return self.signature[self.sigOffset]
+}
+
+func (self iterReader) Read(p []byte) (n int, e error) {
+	dataLen := len(self.data) - self.offset
+	inLen := len(p)
+	if dataLen > 0 && dataLen >= inLen {
+		n = copy(p, self.data[self.offset:])
+		return n, nil
+	}
+
+	return 0, NewReadError("Insufficient bytes to read")
+}
+
+func (self *iterReader) ReadByte() (byte, error) {
+	var val byte
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadInt16() (int16, error) {
+	var val int16
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadUInt16() (uint16, error) {
+	var val uint16
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadInt32() (int32, error) {
+	var val int32
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadUInt32() (uint32, error) {
+	var val uint32
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadInt64() (int64, error) {
+	var val int64
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadUInt64() (uint64, error) {
+	var val uint64
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadDouble() (float64, error) {
+	var val float64
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val, e
+}
+
+func (self *iterReader) ReadBool() (bool, error) {
+	var val uint32
+	e := binary.Read(self, binary.LittleEndian, &val)
+	return val != 0, e
+}
+
+func (self *iterReader) ReadString() (string, int, error) {
+	strLen, err := self.ReadUInt32()
+	if err != nil {
+		return "", 0, err
+	}
+
+	offsetEnd := self.offset + 4 + int(strLen)
+	if offsetEnd >= len(self.data) {
+		return "", 0, ReadError("Insufficient bytes to read")
+	}
+	return string(self.data[4+self.offset : offsetEnd]), offsetEnd + 1, nil
+}
+
+func (self *iterReader) ReadSignature() (string, int, error) {
+	sigLen, err := self.ReadByte()
+	if err != nil {
+		return "", 0, err
+	}
+
+	offsetEnd := self.offset + 1 + int(sigLen)
+	if offsetEnd >= len(self.data) {
+		return "", 0, ReadError("Insufficient bytes to read")
+	}
+	return string(self.data[1+self.offset : offsetEnd]), offsetEnd + 1, nil
+}
+
+func (self *iterReader) ReadVariant() (interface{}, int, error) {
+	sig, newOffset, err := self.ReadSignature()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	self.subReader = newIterReaderWithOffsets(self.data, sig, newOffset, 0)
+
+	return self.subReader.currValue, self.subReader.nextOffset, nil
+}
+
+func (self *iterReader) getStructSig() (string, int, error) {
+	if self.signature[self.sigOffset] != StructBegin {
+		return "", 0, errors.New("Parse error: current signature not struct")
+	}
+
+	i := self.sigOffset + 1
+	sigLen := len(self.signature)
+	for depth := 0; i < sigLen; i++ {
+		switch self.signature[i] {
+		case StructEnd:
+			if depth == 0 {
+				return self.signature[self.sigOffset+1 : i], i + 1, nil
 			}
-			slice = append(slice, bool(b))
-			bufIdx += 4
-			sigIdx++
+			depth--
 
-		case Byte: // byte
-			v, e := _GetByte(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, v)
-			bufIdx++
-			sigIdx++
-
-		case Int16: // int16
-			bufIdx = _Align(alignment[Int16], bufIdx)
-			n, e := _GetInt16(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, n)
-			bufIdx += 2
-			sigIdx++
-
-		case UInt16: // uint16
-			bufIdx = _Align(alignment[UInt16], bufIdx)
-			q, e := _GetUint16(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, q)
-			bufIdx += 2
-			sigIdx++
-
-		case UInt32: // uint32
-			bufIdx = _Align(alignment[UInt32], bufIdx)
-			u, e := _GetUint32(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, u)
-			bufIdx += 4
-			sigIdx++
-
-		case Int64:
-			bufIdx = _Align(alignment[Int64], bufIdx)
-			n, e := _GetInt64(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, n)
-			bufIdx += 8
-			sigIdx++
-
-		case UInt64:
-			bufIdx = _Align(alignment[UInt64], bufIdx)
-			n, e := _GetUInt64(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, n)
-			bufIdx += 8
-			sigIdx++
-
-		case Double:
-			bufIdx = _Align(alignment[Double], bufIdx)
-			n, e := _GetDouble(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, n)
-			bufIdx += 8
-			sigIdx++
-
-		case String, ObjectPath: // string, object
-			bufIdx = _Align(alignment[String], bufIdx)
-
-			size, e := _GetInt32(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			str, e := _GetString(buff, bufIdx+4, int(size))
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, str)
-			bufIdx += (4 + int(size) + 1)
-			sigIdx++
-
-		case Signature: // signature
-			size, e := _GetByte(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			str, e := _GetString(buff, bufIdx+1, int(size))
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, str)
-			bufIdx += (1 + int(size) + 1)
-			sigIdx++
-
-		case Array: // array
-			startIdx := _Align(alignment[Array], bufIdx)
-			arySize, e := _GetInt32(buff, startIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			sigBlock, e := _GetSigBlock(sig, sigIdx+1)
-			if e != nil {
-				err = e
-				return
-			}
-
-			aryIdx := startIdx + 4
-			tmpSlice := make([]interface{}, 0)
-			for aryIdx < (startIdx+4)+int(arySize) {
-				retSlice, retidx, e := Parse(buff, sigBlock, aryIdx)
-				if e != nil {
-					err = e
-					return
-				}
-				tmpSlice = append(tmpSlice, retSlice...)
-				aryIdx = retidx
-			}
-			bufIdx = aryIdx
-			sigIdx += (1 + len(sigBlock))
-			slice = append(slice, tmpSlice)
-
-		case StructBegin: // struct
-			idx := _Align(alignment[StructBegin], bufIdx)
-			stSig, e := _GetStructSig(sig, sigIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			retSlice, retidx, e := Parse(buff, stSig, idx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			bufIdx = retidx
-			sigIdx += (len(stSig) + 2)
-			slice = append(slice, retSlice)
-
-		case DictBegin: // dict
-			idx := _Align(alignment[DictBegin], bufIdx)
-			stSig, e := _GetDictSig(sig, sigIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			retSlice, retidx, e := Parse(buff, stSig, idx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			bufIdx = retidx
-			sigIdx += (len(stSig) + 2)
-			slice = append(slice, retSlice)
-
-		case Variant: // variant
-			vals, idx, e := _GetVariant(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			bufIdx = idx
-			sigIdx++
-			slice = append(slice, vals...)
-
-		default:
-			fmt.Println(sig[sigIdx])
-			return nil, index, errors.New("unknown type")
+		case StructBegin:
+			depth++
 		}
 	}
+
+	return "", 0, errors.New("Parse error: No struct end byte in signature")
+}
+
+// ReadStruct reads dbus struct into slice of values
+// It returns slice, new offset, new signature offset and possibly error
+func (self *iterReader) ReadStruct() ([]interface{}, int, int, error) {
+	sig, newSigOffset, err := self.getStructSig()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	self.subReader = newIterReaderWithOffsets(self.data, sig, self.offset, 0)
+
+	slice := []interface{}{}
+
+	for {
+		slice = append(slice, self.subReader.Value())
+
+		err = self.subReader.Next()
+		if _, ok := err.(EOM); ok {
+			break
+		}
+
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+
+	return slice, self.subReader.nextOffset, newSigOffset, nil
+}
+
+func (self *iterReader) getDictSig() (string, int, error) {
+	if self.signature[self.sigOffset] != DictBegin {
+		return "", 0, errors.New("Parse error: current signature not dictionary")
+	}
+
+	i := self.sigOffset + 1
+	sigLen := len(self.signature)
+	for depth := 0; i < sigLen; i++ {
+		switch self.signature[i] {
+		case DictEnd:
+			if depth == 0 {
+				return self.signature[self.sigOffset+1 : i], i + 1, nil
+			}
+			depth--
+
+		case DictBegin:
+			depth++
+		}
+	}
+
+	return "", 0, errors.New("Parse error: No Dict ending in signature")
+}
+
+// ReadDict reads dbus dictionary into slice of values
+// It returns slice, new offset, new signature offset and possibly error
+func (self *iterReader) ReadDict() ([]interface{}, int, int, error) {
+	sig, newSigOffset, err := self.getDictSig()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	self.subReader = newIterReaderWithOffsets(self.data, sig, self.offset, 0)
+
+	slice := []interface{}{}
+
+	for {
+		slice = append(slice, self.subReader.Value())
+
+		err = self.subReader.Next()
+		if _, ok := err.(EOM); ok {
+			break
+		}
+
+		if err != nil {
+			return nil, 0, 0, err
+		}
+	}
+
+	return slice, self.subReader.nextOffset, newSigOffset, nil
+}
+
+func (self *iterReader) getArraySig() (string, int, error) {
+	if self.signature[self.sigOffset] != Array {
+		return "", 0, errors.New("Parse error: current signature not array")
+	}
+
+	self.sigOffset += 1
+
+	switch self.signature[self.sigOffset] {
+	case StructBegin:
+		sig, newSigOffset, err := self.getStructSig()
+		if err != nil {
+			return "", 0, err
+		}
+		return string(StructBegin) + sig + string(StructEnd), newSigOffset, nil
+	}
+
+	return self.signature[self.sigOffset : self.sigOffset+1], self.sigOffset + 1, nil
+}
+
+func (self *iterReader) ReadArray() ([]interface{}, int, int, error) {
+	arrayLen, err := self.ReadUInt32()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	arraySig, newSigOffset, err := self.getArraySig()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	self.subReader = newIterReaderWithOffsets(self.data, arraySig, self.offset+4, 0)
+
+	slice := []interface{}{}
+	endOffset := self.offset + 4 + int(arrayLen)
+
+	for {
+		slice = append(slice, self.subReader.Value())
+
+		self.subReader.nextSigOffset = 0
+
+		if self.subReader.nextOffset < endOffset {
+			err = self.subReader.Next()
+			if err != nil {
+				return nil, 0, 0, err
+			}
+			continue
+		}
+		break
+	}
+
+	return slice, endOffset, newSigOffset, nil
+}
+
+func (self *iterReader) RecalculateOffset() error {
+	currType := self.signature[self.sigOffset]
+
+	if align, ok := alignment[currType]; ok {
+		newOffset := _Align(align, self.offset)
+
+		if newOffset >= len(self.data) {
+			return ReadError("Not enough bytes to read")
+		}
+
+		if newOffset >= 0 {
+			self.offset = newOffset
+			return nil
+		}
+	}
+
+	return errors.New("Unknown type" + string(currType))
+}
+
+func (self *iterReader) Reinit() (err error) {
+	if err = self.RecalculateOffset(); err != nil {
+		return err
+	}
+
+	return self.fillValue()
+}
+
+// Next goes to the next value in signature
+// It returns EOM (end of message) error at the end
+func (self *iterReader) Next() error {
+
+	if self.nextSigOffset >= len(self.signature) {
+		return EOM("")
+	}
+	self.sigOffset = self.nextSigOffset
+
+	if self.nextOffset >= len(self.data) {
+		return ReadError("Signature longer than data length")
+	}
+
+	self.offset = self.nextOffset
+	if err := self.RecalculateOffset(); err != nil {
+		return err
+	}
+
+	// Reads new value according to signature
+	if err := self.fillValue(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// fillValue read current value into currValue member
+// and sets offsets for the next value
+func (self *iterReader) fillValue() error {
+	var val interface{}
+	var err error = nil
+
+	switch self.signature[self.sigOffset] {
+	case Boolean:
+		if val, err = self.ReadBool(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Boolean]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Byte:
+		if val, err = self.ReadByte(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Byte]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Int16:
+		if val, err = self.ReadInt16(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Int16]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case UInt16:
+		if val, err = self.ReadUInt16(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[UInt16]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Int32:
+		if val, err = self.ReadInt32(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Int32]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case UInt32:
+		if val, err = self.ReadUInt32(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[UInt32]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Int64:
+		if val, err = self.ReadInt64(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Int64]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case UInt64:
+		if val, err = self.ReadUInt64(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[UInt64]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Double:
+		if val, err = self.ReadDouble(); err == nil {
+			self.currValue = val
+			self.nextOffset = self.offset + alignment[Double]
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case String, ObjectPath:
+		var newOffset int
+		if val, newOffset, err = self.ReadString(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Signature:
+		var newOffset int
+		if val, newOffset, err = self.ReadSignature(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case Variant:
+		var newOffset int
+		if val, newOffset, err = self.ReadVariant(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = self.sigOffset + 1
+		}
+
+	case StructBegin:
+		var newOffset, newSigOffset int
+		if val, newOffset, newSigOffset, err = self.ReadStruct(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = newSigOffset
+		}
+
+	case DictBegin:
+		var newOffset, newSigOffset int
+		if val, newOffset, newSigOffset, err = self.ReadDict(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = newSigOffset
+		}
+
+	case Array:
+		var newOffset, newSigOffset int
+		if val, newOffset, newSigOffset, err = self.ReadArray(); err == nil {
+			self.currValue = val
+			self.nextOffset = newOffset
+			self.nextSigOffset = newSigOffset
+		}
+
+	default:
+		return ReadError("Value type unknown: " + string(self.signature[self.sigOffset]))
+	}
+
+	return err
+}
+
+// Value returns value at current offset (according to signature)
+func (self *iterReader) Value() interface{} {
+	return self.currValue
+}
+
+// NextValue moves iter to the next value and returns it
+// This is identical to Next + Value
+func (self *iterReader) NextValue() (val interface{}, e error) {
+	e = self.Next()
+	if e != nil {
+		return nil, e
+	}
+
+	val = self.Value()
+
 	return
+}
+func Parse(buff []byte, sig string) (slice []interface{}, err error) {
+	slice = make([]interface{}, 0)
+	iter := newIterReader(buff, sig)
+
+	for {
+		slice = append(slice, iter.Value())
+
+		e := iter.Next()
+		if _, ok := e.(EOM); ok {
+			break
+		}
+
+		if e != nil {
+			return nil, e
+		}
+
+	}
+
+	return slice, nil
 }

@@ -270,7 +270,7 @@ func (p *Connection) _PopMessage() (*Message, error) {
 	rm := link.Value.(*rawMessage)
 	p.inMsgQueue.Remove(link)
 
-	msg, _, err := _Unmarshal(rm)
+	msg, err := _Unmarshal(rm)
 	if err != nil {
 		return nil, err
 	}
