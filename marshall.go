@@ -263,17 +263,7 @@ type iterReader struct {
 }
 
 func newIterReader(data []byte, signature string) *iterReader {
-	ir := &iterReader{}
-	ir.data = data
-	ir.signature = signature
-	ir.offset = 0
-	ir.sigOffset = 0
-
-	if err := ir.Reinit(); err != nil {
-		return nil
-	}
-
-	return ir
+	return newIterReaderWithOffsets(data, signature, 0, 0)
 }
 
 func newIterReaderWithOffsets(data []byte, signature string, offset, sigOffset int) *iterReader {
@@ -530,6 +520,13 @@ func (self *iterReader) getArraySig() (string, int, error) {
 			return "", 0, err
 		}
 		return string(StructBegin) + sig + string(StructEnd), newSigOffset, nil
+
+	case DictBegin:
+		sig, newSigOffset, err := self.getDictSig()
+		if err != nil {
+			return "", 0, err
+		}
+		return string(DictBegin) + sig + string(DictEnd), newSigOffset, nil
 	}
 
 	return self.signature[self.sigOffset : self.sigOffset+1], self.sigOffset + 1, nil
