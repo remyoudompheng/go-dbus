@@ -74,7 +74,7 @@ func BenchmarkMessage_Unmarshal(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-            _ = msg
+		_ = msg
 	}
 	b.SetBytes(int64(len(teststr)))
 }

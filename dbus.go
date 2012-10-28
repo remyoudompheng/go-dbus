@@ -3,7 +3,6 @@ package dbus
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -252,7 +251,12 @@ func (p *Connection) _MessageDispatch(msg *Message) {
 			}
 		}
 	case TypeError:
-		fmt.Println("ERROR")
+		// TODO: actually handle error messages.
+		rs := msg.replySerial
+		if replyFunc, ok := p.methodCallReplies[rs]; ok {
+			replyFunc(msg)
+			delete(p.methodCallReplies, rs)
+		}
 	}
 }
 

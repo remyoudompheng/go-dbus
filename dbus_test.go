@@ -25,7 +25,12 @@ var callTests = []callTest{
 }
 
 func (test callTest) Call(c *Connection) error {
-	method, err := c.Object(test.dest, test.path).Interface(test.iface).Method(test.method)
+	obj := c.Object(test.dest, test.path)
+	iface := obj.Interface(test.iface)
+	if iface == nil {
+		return fmt.Errorf("nil iface: dest=%s, path=%s, iface=%s", test.dest, test.path, test.iface)
+	}
+	method, err := iface.Method(test.method)
 	if err != nil {
 		return err
 	}
