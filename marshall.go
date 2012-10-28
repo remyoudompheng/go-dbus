@@ -30,8 +30,7 @@ func _AppendAlign(length int, buff *bytes.Buffer) {
 }
 
 func _AppendString(buff *bytes.Buffer, str string) {
-	_AppendAlign(4, buff)
-	binary.Write(buff, binary.LittleEndian, int32(len(str)))
+	_AppendInt32(buff, int32(len(str)))
 	buff.WriteString(str)
 	buff.WriteByte(0)
 }
@@ -44,12 +43,16 @@ func _AppendSignature(buff *bytes.Buffer, sig string) {
 
 func _AppendUint32(buff *bytes.Buffer, ui uint32) {
 	_AppendAlign(4, buff)
-	binary.Write(buff, binary.LittleEndian, ui)
+	var b [4]byte
+	binary.LittleEndian.PutUint32(b[:], ui)
+	buff.Write(b[:])
 }
 
 func _AppendInt32(buff *bytes.Buffer, i int32) {
 	_AppendAlign(4, buff)
-	binary.Write(buff, binary.LittleEndian, i)
+	var b [4]byte
+	binary.LittleEndian.PutUint32(b[:], uint32(i))
+	buff.Write(b[:])
 }
 
 func _AppendArray(buff *bytes.Buffer, align int, proc func(b *bytes.Buffer)) {
@@ -165,19 +168,15 @@ func _GetUint32(buff []byte, index int) (uint32, error) {
 }
 
 func _GetBoolean(buff []byte, index int) (bool, error) {
-	if len(buff) <= index+4-1 {
+	if len(buff) < index+4 {
 		return false, errIndex
 	}
-	var v int32
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &v)
-	if e != nil {
-		return false, e
-	}
-	return 0 != v, nil
+	v := binary.LittleEndian.Uint32(buff[index:])
+	return v != 0, nil
 }
 
 func _GetString(buff []byte, index int, size int) (string, error) {
-	if len(buff) <= (index + size - 1) {
+	if len(buff) < index+size {
 		return "", errIndex
 	}
 	return string(buff[index : index+size]), nil

@@ -197,7 +197,7 @@ func Connect(busType StandardBus) (*Connection, error) {
 	bus.methodCallReplies = make(map[uint32]func(*Message))
 	bus.signalMatchRules = make([]signalHandler, 0)
 	bus.proxy = bus._GetProxy()
-	bus.buffer = bytes.NewBuffer([]byte{})
+	bus.buffer = new(bytes.Buffer)
 	return bus, nil
 }
 

@@ -34,7 +34,7 @@ func TestAppendAlign(t *testing.T) {
 }
 
 func checkAppendString(t *testing.T, input []string, expected string) {
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 	for _, str := range input {
 		_AppendString(buff, str)
 	}
@@ -49,7 +49,7 @@ func TestAppendString(t *testing.T) {
 }
 
 func TestAppendByte(t *testing.T) {
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 	buff.WriteByte(1)
 	if !bytes.Equal([]byte("\x01"), buff.Bytes()) {
 		t.Error("#1 Failed")
@@ -61,7 +61,7 @@ func TestAppendByte(t *testing.T) {
 }
 
 func TestAppendUint32(t *testing.T) {
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 	_AppendUint32(buff, 1)
 	if !bytes.Equal([]byte("\x01\x00\x00\x00"), buff.Bytes()) {
 		t.Error("#1 Failed")
@@ -74,7 +74,7 @@ func TestAppendUint32(t *testing.T) {
 }
 
 func TestAppendInt32(t *testing.T) {
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 	_AppendInt32(buff, int32(-1))
 	if !bytes.Equal([]byte("\xff\xff\xff\xff"), buff.Bytes()) {
 		t.Error("#1 Failed")
@@ -90,7 +90,7 @@ func TestAppendInt32(t *testing.T) {
 func TestAppendArray(t *testing.T) {
 	teststr := "\x01\x02\x03\x04\x05\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x02"
 
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 	buff.WriteByte(1)
 	buff.WriteByte(2)
 	buff.WriteByte(3)
@@ -112,7 +112,7 @@ func TestAppendArray(t *testing.T) {
 }
 
 func TestAppendValue(t *testing.T) {
-	buff := bytes.NewBuffer([]byte{})
+	buff := new(bytes.Buffer)
 
 	_AppendValue(buff, "s", "string")
 	_AppendValue(buff, "s", "test2")
