@@ -50,11 +50,11 @@ func TestAppendString(t *testing.T) {
 
 func TestAppendByte(t *testing.T) {
 	buff := bytes.NewBuffer([]byte{})
-	_AppendByte(buff, 1)
+	buff.WriteByte(1)
 	if !bytes.Equal([]byte("\x01"), buff.Bytes()) {
 		t.Error("#1 Failed")
 	}
-	_AppendByte(buff, 2)
+	buff.WriteByte(2)
 	if !bytes.Equal([]byte("\x01\x02"), buff.Bytes()) {
 		t.Error("#2 Failed")
 	}
@@ -66,7 +66,7 @@ func TestAppendUint32(t *testing.T) {
 	if !bytes.Equal([]byte("\x01\x00\x00\x00"), buff.Bytes()) {
 		t.Error("#1 Failed")
 	}
-	_AppendByte(buff, 2)
+	buff.WriteByte(2)
 	_AppendUint32(buff, 0xffffffff)
 	if !bytes.Equal([]byte("\x01\x00\x00\x00\x02\x00\x00\x00\xff\xff\xff\xff"), buff.Bytes()) {
 		t.Error("#2 Failed")
@@ -91,18 +91,18 @@ func TestAppendArray(t *testing.T) {
 	teststr := "\x01\x02\x03\x04\x05\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x02"
 
 	buff := bytes.NewBuffer([]byte{})
-	_AppendByte(buff, 1)
-	_AppendByte(buff, 2)
-	_AppendByte(buff, 3)
-	_AppendByte(buff, 4)
-	_AppendByte(buff, 5)
+	buff.WriteByte(1)
+	buff.WriteByte(2)
+	buff.WriteByte(3)
+	buff.WriteByte(4)
+	buff.WriteByte(5)
 
 	_AppendArray(buff, 1,
 		func(b *bytes.Buffer) {
 			t.Log(b.Bytes())
 			_AppendAlign(8, b)
 			t.Log(b.Bytes())
-			_AppendByte(b, 2)
+			b.WriteByte(2)
 			t.Log(b.Bytes())
 		})
 

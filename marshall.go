@@ -30,17 +30,15 @@ func _AppendAlign(length int, buff *bytes.Buffer) {
 func _AppendString(buff *bytes.Buffer, str string) {
 	_AppendAlign(4, buff)
 	binary.Write(buff, binary.LittleEndian, int32(len(str)))
-	buff.Write([]byte(str))
+	buff.WriteString(str)
 	buff.WriteByte(0)
 }
 
 func _AppendSignature(buff *bytes.Buffer, sig string) {
-	_AppendByte(buff, byte(len(sig)))
-	buff.Write([]byte(sig))
+	buff.WriteByte(byte(len(sig)))
+	buff.WriteString(sig)
 	buff.WriteByte(0)
 }
-
-func _AppendByte(buff *bytes.Buffer, b byte) { binary.Write(buff, binary.LittleEndian, b) }
 
 func _AppendUint32(buff *bytes.Buffer, ui uint32) {
 	_AppendAlign(4, buff)
@@ -73,7 +71,7 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 
 	switch sig[0] {
 	case 'y': // byte
-		_AppendByte(buff, val.(byte))
+		buff.WriteByte(val.(byte))
 		sigOffset = 1
 
 	case 's': // string

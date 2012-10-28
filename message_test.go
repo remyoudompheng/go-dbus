@@ -44,3 +44,23 @@ func TestMarshal(t *testing.T) {
 		t.Error("#1 Failed\n", buff, "\n", []byte(teststr))
 	}
 }
+
+func BenchmarkMessage_Marshal(b *testing.B) {
+	msg := NewMessage()
+	msg.Type = TypeMethodCall
+	msg.Path = "org.freedesktop.systemd1"
+	msg.Dest = "/org/freedesktop/systemd1"
+	msg.Iface = "org.freedesktop.DBus.Introspectable"
+	msg.Member = "Introspect"
+
+	var buf []byte
+	var err error
+	for i := 0; i < b.N; i++ {
+		buf, err = msg._Marshal()
+	}
+
+	if err != nil {
+		b.Error(err)
+	}
+	b.SetBytes(int64(len(buf)))
+}
