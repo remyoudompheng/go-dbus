@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+var errIndex = errors.New("index error")
+
 func _Align(length int, index int) int {
 	switch length {
 	case 1:
@@ -129,62 +131,42 @@ func _AppendParamsData(buff *bytes.Buffer, sig string, params []interface{}) {
 
 func _GetByte(buff []byte, index int) (byte, error) {
 	if len(buff) <= index {
-		return 0, errors.New("index error")
+		return 0, errIndex
 	}
 	return buff[index], nil
 }
 
 func _GetInt16(buff []byte, index int) (int16, error) {
-	if len(buff) <= index+2-1 {
-		return 0, errors.New("index error")
+	if len(buff) < index+2 {
+		return 0, errIndex
 	}
-	var n int16
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &n)
-	if e != nil {
-		return 0, e
-	}
-	return n, nil
+	return int16(binary.LittleEndian.Uint16(buff[index:])), nil
 }
 
 func _GetUint16(buff []byte, index int) (uint16, error) {
-	if len(buff) <= index+2-1 {
-		return 0, errors.New("index error")
+	if len(buff) < index+2 {
+		return 0, errIndex
 	}
-	var q uint16
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &q)
-	if e != nil {
-		return 0, e
-	}
-	return q, nil
+	return binary.LittleEndian.Uint16(buff[index:]), nil
 }
 
 func _GetInt32(buff []byte, index int) (int32, error) {
-	if len(buff) <= index+4-1 {
-		return 0, errors.New("index error")
+	if len(buff) < index+4 {
+		return 0, errIndex
 	}
-	var l int32
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &l)
-	if e != nil {
-		return 0, e
-	}
-	return l, nil
+	return int32(binary.LittleEndian.Uint32(buff[index:])), nil
 }
 
 func _GetUint32(buff []byte, index int) (uint32, error) {
-	if len(buff) <= index+4-1 {
-		return 0, errors.New("index error")
+	if len(buff) < index+4 {
+		return 0, errIndex
 	}
-	var u uint32
-	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &u)
-	if e != nil {
-		return 0, e
-	}
-	return u, nil
+	return binary.LittleEndian.Uint32(buff[index:]), nil
 }
 
 func _GetBoolean(buff []byte, index int) (bool, error) {
 	if len(buff) <= index+4-1 {
-		return false, errors.New("index error")
+		return false, errIndex
 	}
 	var v int32
 	e := binary.Read(bytes.NewBuffer(buff[index:len(buff)]), binary.LittleEndian, &v)
@@ -196,14 +178,14 @@ func _GetBoolean(buff []byte, index int) (bool, error) {
 
 func _GetString(buff []byte, index int, size int) (string, error) {
 	if len(buff) <= (index + size - 1) {
-		return "", errors.New("index error")
+		return "", errIndex
 	}
 	return string(buff[index : index+size]), nil
 }
 
 func _GetStructSig(sig string, startIdx int) (string, error) {
 	if len(sig) <= startIdx || '(' != sig[startIdx] {
-		return "<nil>", errors.New("index error")
+		return "<nil>", errIndex
 	}
 	sigIdx := startIdx + 1
 	for depth := 0; sigIdx < len(sig); sigIdx++ {
@@ -223,7 +205,7 @@ func _GetStructSig(sig string, startIdx int) (string, error) {
 
 func _GetDictSig(sig string, startIdx int) (string, error) {
 	if len(sig) <= startIdx || '{' != sig[startIdx] {
-		return "<nil>", errors.New("index error")
+		return "<nil>", errIndex
 	}
 	sigIdx := startIdx + 1
 	for depth := 0; sigIdx < len(sig); sigIdx++ {
@@ -273,7 +255,7 @@ func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e erro
 }
 
 func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int, err error) {
-	slice = make([]interface{}, 0)
+	slice = make([]interface{}, 0, len(sig))
 	bufIdx = index
 	for sigIdx := 0; sigIdx < len(sig); {
 		switch sig[sigIdx] {

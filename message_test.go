@@ -64,3 +64,17 @@ func BenchmarkMessage_Marshal(b *testing.B) {
 	}
 	b.SetBytes(int64(len(buf)))
 }
+
+func BenchmarkMessage_Unmarshal(b *testing.B) {
+	const teststr = "l\x01\x00\x01\x00\x00\x00\x00\x01\x00\x00\x00m\x00\x00\x00\x01\x01o\x00\x15\x00\x00\x00/org/freedesktop/DBus\x00\x00\x00\x02\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00\x03\x01s\x00\x05\x00\x00\x00Hello\x00\x00\x00\x06\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00"
+
+	input := []byte(teststr)
+	for i := 0; i < b.N; i++ {
+		msg, _, err := _Unmarshal(input)
+		if err != nil {
+			b.Fatal(err)
+		}
+            _ = msg
+	}
+	b.SetBytes(int64(len(teststr)))
+}
