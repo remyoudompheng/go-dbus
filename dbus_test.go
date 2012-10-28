@@ -1,7 +1,6 @@
 package dbus
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -12,8 +11,8 @@ type callTest struct {
 }
 
 var callTests = []callTest{
-	{"org.freedesktop.Notifications", "/org/freedesktop/Notifications",
-		"org.freedesktop.Notifications", "Notify",
+	{"org.freedesktop.DBus", "/org/freedesktop/DBus",
+		"org.freedesktop.DBus", "ListNames",
 		[]interface{}{
 			"go-dbus", uint32(0),
 			"info", "testing go-dbus", "test_body",
@@ -24,24 +23,22 @@ var callTests = []callTest{
 		}},
 }
 
-func (test callTest) Call(c *Connection) error {
-	obj := c.Object(test.dest, test.path)
-	iface := obj.Interface(test.iface)
-	if iface == nil {
-		return fmt.Errorf("nil iface: dest=%s, path=%s, iface=%s", test.dest, test.path, test.iface)
-	}
-	method, err := iface.Method(test.method)
+func testCall(c *Connection, t *testing.T, test callTest) {
+	method, err := c.Object(test.dest, test.path).
+		Interface(test.iface).
+		Method(test.method)
 	if err != nil {
-		return err
+		t.Error(err)
 	}
 	out, err := c.Call(method, test.args...)
 	if err != nil {
-		return fmt.Errorf("failed Method.Call: %v", err)
+		t.Errorf("failed Method.Call: %v", err)
+		return
 	}
+	t.Log(out)
 	if err = test.validate(out); err != nil {
-		err = fmt.Errorf("failed validation: %v", err)
+		t.Errorf("failed validation: %v", err)
 	}
-	return err
 }
 
 func TestDBus(t *testing.T) {
@@ -55,9 +52,7 @@ func TestDBus(t *testing.T) {
 	}
 
 	for i, test := range callTests {
-		err := test.Call(con)
-		if err != nil {
-			t.Errorf("callTest %d: %v", i, err)
-		}
+		t.Logf("call test %d", i)
+		testCall(con, t, test)
 	}
 }
