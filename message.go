@@ -2,6 +2,7 @@ package dbus
 
 import (
 	"bytes"
+	"encoding/binary"
 	"sync"
 )
 
@@ -77,44 +78,36 @@ func NewMessage() *Message {
 }
 
 func (p *Message) _BufferToMessage(buff []byte) (int, error) {
-	slice, bufIdx, e := Parse(buff, "yyyyuua(yv)", 0)
-	if e != nil {
-		return 0, e
+	msg := &msgData{Data: buff, Idx: 0}
+	switch buff[0] {
+	case 'l':
+		msg.Endianness = binary.LittleEndian
+	case 'B':
+		msg.Endianness = binary.BigEndian
+	}
+	hdr, flds, err := msg.scanHeader()
+	if err != nil {
+		return 0, err
 	}
 
-	p.Type = MessageType(slice[1].(byte))
-	p.Flags = MessageFlag(slice[2].(byte))
-	p.Protocol = int(slice[3].(byte))
-	p.bodyLength = int(slice[4].(uint32))
-	p.serial = int(slice[5].(uint32))
+	p.Type = MessageType(hdr.Type)
+	p.Flags = MessageFlag(hdr.Flags)
+	p.Protocol = int(hdr.Protocol)
+	p.bodyLength = int(hdr.BodyLength)
+	p.serial = int(hdr.Serial)
 
-	if vec, ok := slice[6].([]interface{}); ok {
-		for _, v := range vec {
-			tmpSlice := v.([]interface{})
-			t := int(tmpSlice[0].(byte))
-			val := tmpSlice[1]
+	p.Path = string(flds.Path)
+	p.Iface = flds.Interface
+	p.Member = flds.Member
+	p.ErrorName = flds.ErrorName
+	p.replySerial = flds.ReplySerial
+	p.Dest = flds.Destination
+	// FIXME = flds.Sender
+	p.Sig = string(flds.Signature)
+	// FIXME = flds.NumFDs
 
-			switch t {
-			case 1:
-				p.Path = val.(string)
-			case 2:
-				p.Iface = val.(string)
-			case 3:
-				p.Member = val.(string)
-			case 4:
-				p.ErrorName = val.(string)
-			case 5:
-				p.replySerial = val.(uint32)
-			case 6:
-				p.Dest = val.(string)
-			case 7:
-				// FIXME
-			case 8:
-				p.Sig = val.(string)
-			}
-		}
-	}
-	idx := _Align(8, bufIdx)
+	msg.Round(8)
+	idx := msg.Idx
 	if 0 < p.bodyLength {
 		p.Params, idx, _ = Parse(buff, p.Sig, idx)
 	}

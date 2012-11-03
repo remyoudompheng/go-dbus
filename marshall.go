@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"strings"
 )
 
@@ -428,4 +430,177 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 		}
 	}
 	return
+}
+
+// The D-Bus message header. A message consists of this and an array
+// of byte and variants.
+type msgHeader struct {
+	Endianness byte
+	Type       byte
+	Flags      byte
+	Protocol   byte
+	BodyLength uint32
+	Serial     uint32
+}
+
+type ObjectPath string
+type Signature string
+
+type msgHeaderFields struct {
+	Path        ObjectPath // field 1
+	Interface   string
+	Member      string
+	ErrorName   string
+	ReplySerial uint32
+	Destination string
+	Sender      string
+	Signature   Signature
+	NumFD       uint32 // field 9
+}
+
+type msgData struct {
+	Endianness binary.ByteOrder
+
+	Data []byte
+	Idx  int
+}
+
+func (msg *msgData) Round(rnd int) {
+	switch rnd {
+	case 1:
+		// nothing.
+	case 2, 4, 8:
+		bit := rnd - 1
+		msg.Idx = ^bit & (msg.Idx + bit)
+	default:
+		panic("invalid Round argument")
+	}
+}
+
+func (msg *msgData) Next(n int) []byte {
+	s := msg.Data[msg.Idx:]
+	msg.Idx += n
+	return s
+}
+
+func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error) {
+	// The fixed header.
+	msg.scan("(yyyyuu)", &hdr)
+	// Now an array of byte and variant.
+	fldVal := reflect.ValueOf(&flds).Elem()
+	msg.Round(4)
+	fldLen := msg.Endianness.Uint32(msg.Next(4))
+	fldEnd := msg.Idx + int(fldLen)
+	for msg.Idx < fldEnd {
+		// A field is a struct byte + variant, hence aligned on 8 bytes.
+		msg.Round(8)
+		b := msg.Next(1)[0]
+		// A variant is a signature and value.
+		var fldSig Signature
+		msg.scan("g", &fldSig)
+		msg.scanValue(fldSig, fldVal.Field(int(b)-1))
+	}
+	return
+}
+
+func (msg *msgData) scan(sig Signature, val interface{}) (err error) {
+	return msg.scanValue(sig, reflect.ValueOf(val).Elem())
+}
+
+func (msg *msgData) scanMany(sig Signature, val ...reflect.Value) (err error) {
+	i := 0
+	for len(sig) > 0 {
+		item, _ := _GetSigBlock(string(sig), 0)
+		sig = sig[len(item):]
+		msg.scanValue(Signature(item), val[i])
+		i++
+	}
+	return
+}
+
+// scan reads data from buf according to the first item in signature sig and fills val.
+// It returns the number of bytes consumed.
+// http://dbus.freedesktop.org/doc/dbus-specification.html#type-system
+func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
+	switch sig[0] {
+	case 'y': // byte
+		val.SetUint(uint64(msg.Data[msg.Idx]))
+		msg.Idx++
+
+	case 'b': // bool
+		msg.Round(4)
+		x := msg.Endianness.Uint32(msg.Next(4))
+		val.SetBool(x != 0)
+
+	case 'n': // int16
+		msg.Round(2)
+		x := msg.Endianness.Uint16(msg.Next(2))
+		val.SetInt(int64(x))
+	case 'q': // uint16
+		msg.Round(2)
+		x := msg.Endianness.Uint16(msg.Next(2))
+		val.SetUint(uint64(x))
+
+	case 'i': // int32
+		msg.Round(4)
+		x := msg.Endianness.Uint32(msg.Next(4))
+		val.SetInt(int64(x))
+	case 'u': // uint32
+		msg.Round(4)
+		x := msg.Endianness.Uint32(msg.Next(4))
+		val.SetUint(uint64(x))
+
+	case 'x': // int64
+		msg.Round(8)
+		x := msg.Endianness.Uint64(msg.Next(8))
+		val.SetInt(int64(x))
+	case 't': // uint64
+		msg.Round(4)
+		x := msg.Endianness.Uint64(msg.Next(8))
+		val.SetUint(x)
+	case 'd': // double
+		msg.Round(8)
+		x := msg.Endianness.Uint64(msg.Next(8))
+		val.SetFloat(math.Float64frombits(x))
+
+	case 's', 'o': // string, object name
+		msg.Round(4)
+		l := msg.Endianness.Uint32(msg.Next(4))
+		s := msg.Next(int(l) + 1)
+		val.SetString(string(s[:l]))
+
+	case 'g': // signature string
+		l := msg.Next(1)[0]
+		s := msg.Next(int(l) + 1)
+		val.SetString(string(s[:l]))
+
+	case 'a': // array
+		elemsig := sig[1:]
+		msg.Round(4)
+		// length in bytes.
+		l := msg.Endianness.Uint32(msg.Next(4))
+		end := msg.Idx + int(l)
+		for msg.Idx < end {
+			elemval := reflect.New(val.Type().Elem()).Elem()
+			_ = msg.scanValue(elemsig, elemval)
+			v := reflect.Append(val, elemval)
+			val.Set(v)
+		}
+
+	case '(': // struct
+		msg.Round(8)
+		structSig, _ := _GetSigBlock(string(sig), 0)
+		fields := make([]reflect.Value, val.NumField())
+		for i := range fields {
+			fields[i] = val.Field(i)
+		}
+		msg.scanMany(sig[1:len(structSig)-1], fields...)
+
+	default:
+		panic("unsupported")
+		//case '(': // struct
+		//case '{': // dict
+		//case 'h': // file descriptor
+	}
+	return nil
 }
