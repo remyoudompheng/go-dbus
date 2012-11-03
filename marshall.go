@@ -134,54 +134,11 @@ func _AppendParamsData(buff *bytes.Buffer, sig string, params []interface{}) {
 	}
 }
 
-func _GetByte(buff []byte, index int) (byte, error) {
-	if len(buff) <= index {
-		return 0, errIndex
-	}
-	return buff[index], nil
-}
-
-func _GetInt16(buff []byte, index int) (int16, error) {
-	if len(buff) < index+2 {
-		return 0, errIndex
-	}
-	return int16(binary.LittleEndian.Uint16(buff[index:])), nil
-}
-
-func _GetUint16(buff []byte, index int) (uint16, error) {
-	if len(buff) < index+2 {
-		return 0, errIndex
-	}
-	return binary.LittleEndian.Uint16(buff[index:]), nil
-}
-
 func _GetInt32(buff []byte, index int) (int32, error) {
 	if len(buff) < index+4 {
 		return 0, errIndex
 	}
 	return int32(binary.LittleEndian.Uint32(buff[index:])), nil
-}
-
-func _GetUint32(buff []byte, index int) (uint32, error) {
-	if len(buff) < index+4 {
-		return 0, errIndex
-	}
-	return binary.LittleEndian.Uint32(buff[index:]), nil
-}
-
-func _GetBoolean(buff []byte, index int) (bool, error) {
-	if len(buff) < index+4 {
-		return false, errIndex
-	}
-	v := binary.LittleEndian.Uint32(buff[index:])
-	return v != 0, nil
-}
-
-func _GetString(buff []byte, index int, size int) (string, error) {
-	if len(buff) < index+size {
-		return "", errIndex
-	}
-	return string(buff[index : index+size]), nil
 }
 
 func _GetStructSig(sig string, startIdx int) (string, error) {
@@ -256,162 +213,111 @@ func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e erro
 }
 
 func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int, err error) {
+	msg := &msgData{Endianness: binary.LittleEndian, Data: buff, Idx: index}
+	defer func() { bufIdx = msg.Idx }()
 	slice = make([]interface{}, 0, len(sig))
-	bufIdx = index
 	for sigIdx := 0; sigIdx < len(sig); {
+		bufIdx = msg.Idx
 		switch sig[sigIdx] {
 		case 'b': // bool
-			bufIdx = _Align(4, bufIdx)
-			b, e := _GetBoolean(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, bool(b))
-			bufIdx += 4
+			msg.Round(4)
+			x := msg.Endianness.Uint32(msg.Next(4))
+			slice = append(slice, bool(x != 0))
 			sigIdx++
 
 		case 'y': // byte
-			v, e := _GetByte(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, v)
-			bufIdx++
+			slice = append(slice, msg.Data[msg.Idx])
+			msg.Idx++
 			sigIdx++
 
 		case 'n': // int16
-			bufIdx = _Align(2, bufIdx)
-			n, e := _GetInt16(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, n)
-			bufIdx += 2
+			msg.Round(2)
+			x := msg.Endianness.Uint16(msg.Next(2))
+			slice = append(slice, int16(x))
 			sigIdx++
 
 		case 'q': // uint16
-			bufIdx = _Align(2, bufIdx)
-			q, e := _GetUint16(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, q)
-			bufIdx += 2
+			msg.Round(2)
+			x := msg.Endianness.Uint16(msg.Next(2))
+			slice = append(slice, uint16(x))
 			sigIdx++
 
 		case 'u': // uint32
-			bufIdx = _Align(4, bufIdx)
-			u, e := _GetUint32(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, u)
-			bufIdx += 4
+			msg.Round(4)
+			x := msg.Endianness.Uint32(msg.Next(4))
+			slice = append(slice, uint32(x))
 			sigIdx++
 
 		case 's', 'o': // string, object
-			bufIdx = _Align(4, bufIdx)
-
-			size, e := _GetInt32(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			str, e := _GetString(buff, bufIdx+4, int(size))
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, str)
-			bufIdx += (4 + int(size) + 1)
+			msg.Round(4)
+			l := msg.Endianness.Uint32(msg.Next(4))
+			s := msg.Next(int(l) + 1)
+			slice = append(slice, string(s[:l]))
 			sigIdx++
 
 		case 'g': // signature
-			size, e := _GetByte(buff, bufIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
-			str, e := _GetString(buff, bufIdx+1, int(size))
-			if e != nil {
-				err = e
-				return
-			}
-			slice = append(slice, str)
-			bufIdx += (1 + int(size) + 1)
+			l := msg.Next(1)[0]
+			s := msg.Next(int(l) + 1)
+			slice = append(slice, string(s[:l]))
 			sigIdx++
 
 		case 'a': // array
-			startIdx := _Align(4, bufIdx)
-			arySize, e := _GetInt32(buff, startIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
 			sigBlock, e := _GetSigBlock(sig, sigIdx+1)
 			if e != nil {
 				err = e
 				return
 			}
 
-			aryIdx := startIdx + 4
+			msg.Round(4)
+			// length in bytes.
+			l := msg.Endianness.Uint32(msg.Next(4))
+			end := msg.Idx + int(l)
 			tmpSlice := make([]interface{}, 0)
-			for aryIdx < (startIdx+4)+int(arySize) {
-				retSlice, retidx, e := Parse(buff, sigBlock, aryIdx)
-				if e != nil {
-					err = e
+			var arrValues []interface{}
+			for msg.Idx < end {
+				arrValues, msg.Idx, err = Parse(msg.Data, sigBlock, msg.Idx)
+				if err != nil {
 					return
 				}
-				tmpSlice = append(tmpSlice, retSlice...)
-				aryIdx = retidx
+				tmpSlice = append(tmpSlice, arrValues...)
 			}
-			bufIdx = aryIdx
+			msg.Idx = end
 			sigIdx += (1 + len(sigBlock))
 			slice = append(slice, tmpSlice)
 
 		case '(': // struct
-			idx := _Align(8, bufIdx)
+			msg.Round(8)
 			stSig, e := _GetStructSig(sig, sigIdx)
 			if e != nil {
 				err = e
 				return
 			}
 
-			retSlice, retidx, e := Parse(buff, stSig, idx)
-			if e != nil {
-				err = e
+			var structVals []interface{}
+			structVals, msg.Idx, err = Parse(msg.Data, stSig, msg.Idx)
+			if err != nil {
 				return
 			}
 
-			bufIdx = retidx
 			sigIdx += (len(stSig) + 2)
-			slice = append(slice, retSlice)
+			slice = append(slice, structVals)
 
 		case '{': // dict
-			idx := _Align(8, bufIdx)
+			msg.Round(8)
 			stSig, e := _GetDictSig(sig, sigIdx)
 			if e != nil {
 				err = e
 				return
 			}
 
-			retSlice, retidx, e := Parse(buff, stSig, idx)
-			if e != nil {
-				err = e
+			var dictVals []interface{}
+			dictVals, msg.Idx, err = Parse(msg.Data, stSig, msg.Idx)
+			if err != nil {
 				return
 			}
 
-			bufIdx = retidx
 			sigIdx += (len(stSig) + 2)
-			slice = append(slice, retSlice)
+			slice = append(slice, dictVals)
 
 		case 'v': // variant
 			vals, idx, e := _GetVariant(buff, bufIdx)
@@ -423,6 +329,7 @@ func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int,
 			bufIdx = idx
 			sigIdx++
 			slice = append(slice, vals...)
+			msg.Idx = bufIdx
 
 		default:
 			fmt.Println(sig[sigIdx])

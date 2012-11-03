@@ -131,40 +131,6 @@ func TestAppendValue(t *testing.T) {
 	}
 }
 
-func TestGetByte(t *testing.T) {
-	if b, _ := _GetByte([]byte("\x00\x11"), 1); b != 0x11 {
-		t.Errorf("#1 Failed 0x%X != 0x11", b)
-	}
-	if _, e := _GetByte([]byte("\x00\x11"), 2); e == nil {
-		t.Errorf("#2 Failed")
-	}
-}
-
-func TestGetBoolean(t *testing.T) {
-	b, e := _GetBoolean([]byte("\x01\x00\x00\x00"), 0)
-	if e != nil {
-		t.Error("#1-1 Failed")
-	}
-	if true != b {
-		t.Error("#1-2 Failed")
-	}
-	_, e = _GetBoolean([]byte("\x01\x00\x00\x00"), 1)
-	if e == nil {
-		t.Error("#2 Failed")
-	}
-}
-
-func TestGetString(t *testing.T) {
-	s, e := _GetString([]byte("\x00\x00test"), 2, 4)
-	if e != nil || s != "test" {
-		t.Error("#1 Failed")
-	}
-	s, e = _GetString([]byte("1234"), 3, 1)
-	if e != nil || s != "4" {
-		t.Error("#2 Failed")
-	}
-}
-
 func TestGetStructSig(t *testing.T) {
 	var str string
 	var e error
@@ -318,26 +284,6 @@ func TestParseNumber(t *testing.T) {
 	}
 	if uint32(4) != sliceRef(vec, 0).(uint32) {
 		t.Error("#1 Failed", sliceRef(vec, 0).(uint32))
-	}
-}
-
-func TestGetUint32(t *testing.T) {
-	u, e := _GetUint32([]byte("\x04\x00\x00\x00"), 0)
-	if e != nil {
-		t.Error("Failed", e.Error())
-	}
-	if uint32(4) != u {
-		t.Error("#1 Failed", u)
-	}
-}
-
-func TestGetInt32(t *testing.T) {
-	i, e := _GetInt32([]byte("\x04\x00\x00\x00"), 0)
-	if e != nil {
-		t.Error("Failed")
-	}
-	if int32(4) != i {
-		t.Error("#1 Failed", i)
 	}
 }
 
