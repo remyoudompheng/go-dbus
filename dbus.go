@@ -116,6 +116,7 @@ type Connection struct {
 	proxy            *Interface
 	// reply channels.
 	replyChans map[uint32]chan<- []byte
+	replyLock  sync.Mutex
 }
 
 type Object struct {
@@ -309,8 +310,10 @@ func (p *Connection) dispatch(serial uint32, rawmsg []byte) error {
 	if serial == 0 {
 		return nil
 	}
+	p.replyLock.Lock()
 	ch := p.replyChans[serial]
 	delete(p.replyChans, serial)
+	p.replyLock.Unlock()
 	if ch == nil {
 		return errUnknownSerial(serial)
 	}
@@ -328,7 +331,9 @@ func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
 	// Prepare response channel.
 	seri := msg.serial
 	replyChan := make(chan []byte, 1)
+	p.replyLock.Lock()
 	p.replyChans[seri] = replyChan
+	p.replyLock.Unlock()
 	_, err = p.conn.Write(rawmsg)
 	if err != nil {
 		// kill connection.
