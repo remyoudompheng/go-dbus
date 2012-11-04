@@ -398,6 +398,10 @@ func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error
 		// A field is a struct byte + variant, hence aligned on 8 bytes.
 		msg.Round(8)
 		b := msg.Next(1)[0]
+		if b > 9 {
+			err = fmt.Errorf("invalid header field ID: %d", b)
+			return
+		}
 		// A variant is a signature and value.
 		var fldSig Signature
 		msg.scan("g", &fldSig)
