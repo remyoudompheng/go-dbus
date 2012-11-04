@@ -144,6 +144,7 @@ func (p *Connection) authenticate(mech Authenticator) error {
 			return nil
 
 		case bytes.HasPrefix(mesg, []byte("REJECTED")):
+			// TODO: parse the supported auth mechanisms.
 			if err != nil {
 				return err
 			}

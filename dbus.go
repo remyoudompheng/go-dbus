@@ -246,10 +246,26 @@ func (p *Connection) handleReplies() error {
 		if err != nil {
 			return err
 		}
-		// Dispatch.
-		err = p.dispatch(replyTo, msg)
-		if err != nil {
-			log.Print(err)
+
+		switch MessageType(msg[msgOffsetType]) {
+		case TypeInvalid, TypeMethodCall:
+			// unsupported.
+		case TypeMethodReturn, TypeError:
+			// Dispatch.
+			err = p.dispatch(replyTo, msg)
+			if err != nil {
+				log.Print(err)
+			}
+		case TypeSignal:
+			reply, err := unmarshal(msg)
+			if err != nil {
+				log.Print(err)
+			}
+			for _, handler := range p.signalMatchRules {
+				if handler.mr._Match(reply) {
+					handler.proc(reply)
+				}
+			}
 		}
 	}
 	panic("unreachable")
@@ -323,10 +339,10 @@ func (p *Connection) dispatch(serial uint32, rawmsg []byte) error {
 }
 
 // sendSync sends a message and synchronously waits fro the reply.
-func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
+func (p *Connection) sendSync(msg *Message) (*Message, error) {
 	rawmsg, err := msg._Marshal()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Prepare response channel.
@@ -339,29 +355,12 @@ func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
 	if err != nil {
 		// kill connection.
 		p.conn.Close()
-		return err
+		return nil, err
 	}
 
 	// Receive reply.
 	rawreply := <-replyChan
-	reply, err := unmarshal(rawreply)
-	if err != nil {
-		return err
-	}
-	switch reply.Type {
-	case TypeMethodReturn:
-		callback(reply)
-	case TypeSignal:
-		for _, handler := range p.signalMatchRules {
-			if handler.mr._Match(reply) {
-				handler.proc(reply)
-			}
-		}
-	case TypeError:
-		// TODO: actually handle error messages.
-		callback(reply)
-	}
-	return nil
+	return newRawMessage(rawreply)
 }
 
 func (p *Connection) _SendHello() error {
@@ -379,16 +378,18 @@ func (p *Connection) _GetIntrospect(dest string, path string) Introspect {
 	msg.Iface = "org.freedesktop.DBus.Introspectable"
 	msg.Member = "Introspect"
 
-	var intro Introspect
+	reply, err := p.sendSync(msg)
+	var introxml string
+	err = reply.unmarshalReflect(&introxml)
+	if err != nil {
+		// TODO: handle error.
+		return nil
+	}
 
-	p.sendSync(msg, func(reply *Message) {
-		if v, ok := reply.Params[0].(string); ok {
-			if i, err := NewIntrospect(v); err == nil {
-				intro = i
-			}
-		}
-	})
-
+	intro, err := NewIntrospect(introxml)
+	if err != nil {
+		intro = nil
+	}
 	return intro
 }
 
@@ -441,12 +442,12 @@ func (p *Connection) Call(method *Method, args ...interface{}) ([]interface{}, e
 		msg.Params = args[:]
 	}
 
-	var ret []interface{}
-	p.sendSync(msg, func(reply *Message) {
-		ret = reply.Params
-	})
-
-	return ret, nil
+	reply, err := p.sendSync(msg)
+	if err != nil {
+		return nil, err
+	}
+	err = reply.parseParams()
+	return reply.Params, err
 }
 
 // Emit a signal with the given arguments.
