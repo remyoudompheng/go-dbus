@@ -41,7 +41,7 @@ func TestMarshal(t *testing.T) {
 
 	buff, _ := msg._Marshal()
 	if teststr != string(buff) {
-		t.Error("#1 Failed\n", buff, "\n", []byte(teststr))
+		t.Errorf("got\n%q\nwant\n%q", buff, teststr)
 	}
 }
 

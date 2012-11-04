@@ -36,13 +36,6 @@ func _AppendString(buff *bytes.Buffer, str string) {
 	buff.WriteString(str)
 	buff.WriteByte(0)
 }
-
-func _AppendSignature(buff *bytes.Buffer, sig string) {
-	buff.WriteByte(byte(len(sig)))
-	buff.WriteString(sig)
-	buff.WriteByte(0)
-}
-
 func _AppendUint32(buff *bytes.Buffer, ui uint32) {
 	_AppendAlign(4, buff)
 	var b [4]byte
@@ -390,6 +383,26 @@ func (msg *msgData) Next(n int) []byte {
 	return s
 }
 
+func (msg *msgData) Put(s []byte) {
+	if msg.Idx >= cap(msg.Data) {
+		newdata := make([]byte, len(msg.Data), msg.Idx+len(msg.Data)/4)
+		copy(newdata, msg.Data)
+		msg.Data = newdata
+	}
+	msg.Data = append(msg.Data[:msg.Idx], s...)
+	msg.Idx += len(s)
+}
+
+func (msg *msgData) PutString(s string) {
+	if msg.Idx >= cap(msg.Data) {
+		newdata := make([]byte, len(msg.Data), msg.Idx+len(msg.Data)/4)
+		copy(newdata, msg.Data)
+		msg.Data = newdata
+	}
+	msg.Data = append(msg.Data[:msg.Idx], s...)
+	msg.Idx += len(s)
+}
+
 func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error) {
 	// The fixed header.
 	msg.scan("(yyyyuu)", &hdr)
@@ -408,6 +421,44 @@ func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error
 		msg.scanValue(fldSig, fldVal.Field(int(b)-1))
 	}
 	return
+}
+
+var fldSigs = []Signature{
+	1: "o",
+	2: "s",
+	3: "s",
+	4: "s",
+	5: "u",
+	6: "s",
+	7: "s",
+	8: "g",
+	9: "u",
+}
+
+func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) error {
+	var buf [8]byte
+	msg.put("(yyyyuu)", hdr)
+	// Now an array of byte and variant.
+	msg.Put(buf[:4])
+	fldStart := msg.Idx
+	fldVal := reflect.ValueOf(flds)
+	for i, imax := 0, fldVal.NumField(); i < imax; i++ {
+		elem := fldVal.Field(i)
+		if elem.Interface() == reflect.Zero(elem.Type()).Interface() {
+			continue
+		}
+		msg.Round(8)
+		// field type byte.
+		buf[0] = byte(i + 1)
+		msg.Put(buf[:1])
+		// field value.
+		fldSig := fldSigs[i+1]
+		msg.put("g", fldSig)
+		msg.putValue(fldSig, elem)
+	}
+	length := msg.Idx - fldStart
+	msg.Endianness.PutUint32(msg.Data[fldStart-4:fldStart], uint32(length))
+	return nil
 }
 
 func (msg *msgData) scan(sig Signature, val interface{}) (err error) {
@@ -502,6 +553,104 @@ func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
 			fields[i] = val.Field(i)
 		}
 		msg.scanMany(sig[1:len(structSig)-1], fields...)
+
+	default:
+		panic("unsupported")
+		//case '(': // struct
+		//case '{': // dict
+		//case 'h': // file descriptor
+	}
+	return nil
+}
+
+func (msg *msgData) put(sig Signature, val interface{}) (err error) {
+	return msg.putValue(sig, reflect.ValueOf(val))
+}
+
+func (msg *msgData) putValue(sig Signature, val reflect.Value) (err error) {
+	var buf [8]byte
+	switch sig[0] {
+	case 'y': // byte
+		buf[0] = byte(val.Uint())
+		msg.Put(buf[:1])
+
+	case 'b': // bool
+		if val.Bool() {
+			buf[0] = 1
+		}
+		msg.Round(4)
+		msg.Put(buf[:4])
+
+	case 'n': // int16
+		msg.Round(2)
+		msg.Endianness.PutUint16(buf[:], uint16(val.Int()))
+		msg.Put(buf[:2])
+	case 'q': // uint16
+		msg.Round(2)
+		msg.Endianness.PutUint16(buf[:], uint16(val.Uint()))
+		msg.Put(buf[:2])
+
+	case 'i': // int32
+		msg.Round(4)
+		msg.Endianness.PutUint32(buf[:], uint32(val.Int()))
+		msg.Put(buf[:4])
+	case 'u': // uint32
+		msg.Round(4)
+		msg.Endianness.PutUint32(buf[:], uint32(val.Uint()))
+		msg.Put(buf[:4])
+
+	case 'x': // int64
+		msg.Round(8)
+		msg.Endianness.PutUint64(buf[:], uint64(val.Int()))
+		msg.Put(buf[:8])
+	case 't': // uint64
+		msg.Round(8)
+		msg.Endianness.PutUint64(buf[:], val.Uint())
+		msg.Put(buf[:8])
+	case 'd': // double
+		msg.Round(8)
+		msg.Endianness.PutUint64(buf[:], math.Float64bits(val.Float()))
+		msg.Put(buf[:8])
+
+	case 's', 'o': // string, object name
+		s := val.String()
+		msg.Round(4)
+		msg.Endianness.PutUint32(buf[:], uint32(len(s)))
+		msg.Put(buf[:4])
+		msg.PutString(s)
+		msg.Put(buf[5:6]) // Nul byte.
+
+	case 'g': // signature string
+		s := val.String()
+		buf[0] = byte(len(s))
+		msg.Put(buf[:1])
+		msg.PutString(s)
+		msg.Put(buf[1:2]) // NUL
+
+	case 'a': // array
+		elemsig := sig[1:]
+		msg.Round(4)
+		// length in bytes.
+		idx := msg.Idx
+		msg.Put(buf[:4])
+		begin := msg.Idx
+		for i, imax := 0, val.Len(); i < imax; i++ {
+			elem := val.Index(i)
+			msg.putValue(elemsig, elem)
+		}
+		length := msg.Idx - begin
+		msg.Endianness.PutUint32(msg.Data[idx:idx+4], uint32(length))
+
+	case '(': // struct
+		msg.Round(8)
+		structSig, _ := _GetSigBlock(string(sig), 0)
+		structSig = structSig[1 : len(structSig)-1]
+		for i, imax := 0, val.NumField(); i < imax; i++ {
+			fldSig, _ := _GetSigBlock(structSig, 0)
+			structSig = structSig[len(fldSig):]
+			fld := val.Field(i)
+			msg.putValue(Signature(fldSig), fld)
+		}
 
 	default:
 		panic("unsupported")

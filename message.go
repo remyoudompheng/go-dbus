@@ -125,76 +125,39 @@ func _Unmarshal(buff []byte) (*Message, int, error) {
 
 func (p *Message) _Marshal() ([]byte, error) {
 	b := make([]byte, 0, 8+len(p.Dest)+len(p.Path)+len(p.Iface)+len(p.Member))
-	buff := bytes.NewBuffer(b)
-	buff.WriteByte(byte('l')) // little Endian
-	buff.WriteByte(byte(p.Type))
-	buff.WriteByte(byte(p.Flags))
-	buff.WriteByte(byte(p.Protocol))
+	hdr := msgHeader{
+		Endianness: 'l',
+		Type:       byte(p.Type),
+		Flags:      byte(p.Flags),
+		Protocol:   byte(p.Protocol),
+		// Bodylength to fill later in buf[4:8]
+		Serial: uint32(p.serial),
+	}
+	flds := msgHeaderFields{
+		Path:        ObjectPath(p.Path),
+		Interface:   p.Iface,
+		Member:      p.Member,
+		ErrorName:   p.ErrorName,
+		ReplySerial: p.replySerial,
+		Destination: p.Dest,
+		Signature:   Signature(p.Sig),
+		// Sender, NumFDs
+	}
+
+	msg := &msgData{
+		Endianness: binary.LittleEndian,
+		Data:       b, Idx: 0}
+	err := msg.putHeader(hdr, flds)
+	if err != nil {
+		return nil, err
+	}
 
 	tmpBuff := new(bytes.Buffer)
 	_AppendParamsData(tmpBuff, p.Sig, p.Params)
-	_AppendUint32(buff, uint32(len(tmpBuff.Bytes())))
-	_AppendUint32(buff, uint32(p.serial))
+	msg.Endianness.PutUint32(msg.Data[4:8], uint32(tmpBuff.Len()))
 
-	_AppendArray(buff, 1,
-		func(b *bytes.Buffer) {
-			if p.Path != "" {
-				_AppendAlign(8, b)
-				b.WriteByte(1) // path
-				b.WriteByte(1) // signature size
-				b.WriteByte('o')
-				b.WriteByte(0)
-				_AppendString(b, p.Path)
-			}
+	msg.Round(8)
+	msg.Put(tmpBuff.Bytes())
 
-			if p.Iface != "" {
-				_AppendAlign(8, b)
-				b.WriteByte(2) // interface
-				b.WriteByte(1) // signature size
-				b.WriteByte('s')
-				b.WriteByte(0)
-				_AppendString(b, p.Iface)
-			}
-
-			if p.Member != "" {
-				_AppendAlign(8, b)
-				b.WriteByte(3) // member
-				b.WriteByte(1) // signature size
-				b.WriteByte('s')
-				b.WriteByte(0)
-				_AppendString(b, p.Member)
-			}
-
-			if p.replySerial != 0 {
-				_AppendAlign(8, b)
-				b.WriteByte(5) // reply serial
-				b.WriteByte(1) // signature size
-				b.WriteByte('u')
-				b.WriteByte(0)
-				_AppendUint32(b, uint32(p.replySerial))
-			}
-
-			if p.Dest != "" {
-				_AppendAlign(8, b)
-				b.WriteByte(6) // destination
-				b.WriteByte(1) // signature size
-				b.WriteByte('s')
-				b.WriteByte(0)
-				_AppendString(b, p.Dest)
-			}
-
-			if p.Sig != "" {
-				_AppendAlign(8, b)
-				b.WriteByte(8) // signature
-				b.WriteByte(1) // signature size
-				b.WriteByte('g')
-				b.WriteByte(0)
-				_AppendSignature(b, p.Sig)
-			}
-		})
-
-	_AppendAlign(8, buff)
-	_AppendParamsData(buff, p.Sig, p.Params)
-
-	return buff.Bytes(), nil
+	return msg.Data, nil
 }
