@@ -281,7 +281,7 @@ func (p *Connection) _FillBuffer() error {
 	bodyLength, _ := _GetInt32(headSig, 4)
 	arrayLength, _ := _GetInt32(headSig, 12)
 	headerLen := 16 + int(arrayLength)
-	pad := _Align(8, headerLen) - headerLen
+	pad := (headerLen+7)&^7 - headerLen
 	restOfMsg := make([]byte, pad+int(arrayLength)+int(bodyLength))
 	n, e = p.conn.Read(restOfMsg)
 

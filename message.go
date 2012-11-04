@@ -1,7 +1,6 @@
 package dbus
 
 import (
-	"bytes"
 	"encoding/binary"
 	"sync"
 )
@@ -152,12 +151,12 @@ func (p *Message) _Marshal() ([]byte, error) {
 		return nil, err
 	}
 
-	tmpBuff := new(bytes.Buffer)
-	_AppendParamsData(tmpBuff, p.Sig, p.Params)
-	msg.Endianness.PutUint32(msg.Data[4:8], uint32(tmpBuff.Len()))
+	submsg := &msgData{Endianness: binary.LittleEndian}
+	appendParamsData(submsg, p.Sig, p.Params)
+	msg.Endianness.PutUint32(msg.Data[4:8], uint32(len(submsg.Data)))
 
 	msg.Round(8)
-	msg.Put(tmpBuff.Bytes())
+	msg.Put(submsg.Data)
 
 	return msg.Data, nil
 }

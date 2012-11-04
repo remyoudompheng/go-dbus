@@ -1,7 +1,6 @@
 package dbus
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,104 +11,76 @@ import (
 
 var errIndex = errors.New("index error")
 
-func _Align(length int, index int) int {
-	switch length {
-	case 1:
-		return index
-	case 2, 4, 8:
-		bit := length - 1
-		return ^bit & (index + bit)
-	}
-	// default
-	return -1
+func appendArray(msg *msgData, align int, proc func(*msgData)) {
+	var buf [4]byte
+	msg.Round(4)
+	msg.Round(align)
+	msg.Put(buf[:4])
+	start := msg.Idx
+	proc(msg)
+	length := msg.Idx - start
+	msg.Endianness.PutUint32(msg.Data[start-4:start], uint32(length))
 }
 
-func _AppendAlign(length int, buff *bytes.Buffer) {
-	padno := _Align(length, buff.Len()) - buff.Len()
-	for i := 0; i < padno; i++ {
-		buff.WriteByte(0)
-	}
-}
-
-func _AppendString(buff *bytes.Buffer, str string) {
-	_AppendInt32(buff, int32(len(str)))
-	buff.WriteString(str)
-	buff.WriteByte(0)
-}
-func _AppendUint32(buff *bytes.Buffer, ui uint32) {
-	_AppendAlign(4, buff)
-	var b [4]byte
-	binary.LittleEndian.PutUint32(b[:], ui)
-	buff.Write(b[:])
-}
-
-func _AppendInt32(buff *bytes.Buffer, i int32) {
-	_AppendAlign(4, buff)
-	var b [4]byte
-	binary.LittleEndian.PutUint32(b[:], uint32(i))
-	buff.Write(b[:])
-}
-
-func _AppendArray(buff *bytes.Buffer, align int, proc func(b *bytes.Buffer)) {
-	_AppendAlign(4, buff)
-	_AppendAlign(align, buff)
-	b := bytes.NewBuffer(buff.Bytes())
-	b.Write([]byte("ABCD")) // "ABCD" will be replaced with array-size.
-	pos1 := b.Len()
-	proc(b)
-	pos2 := b.Len()
-	binary.Write(buff, binary.LittleEndian, int32(pos2-pos1))
-	buff.Write(b.Bytes()[pos1:pos2])
-}
-
-func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset int, e error) {
+func appendValue(msg *msgData, sig string, val interface{}) (sigOffset int, e error) {
 	if len(sig) == 0 {
 		return 0, errors.New("Invalid Signature")
 	}
 
 	e = nil
+	var buf [8]byte
 
 	switch sig[0] {
 	case 'y': // byte
-		buff.WriteByte(val.(byte))
+		buf[0] = val.(byte)
+		msg.Put(buf[:1])
 		sigOffset = 1
 
 	case 's': // string
-		_AppendString(buff, val.(string))
+		msg.Round(4)
+		s := val.(string)
+		msg.Endianness.PutUint32(buf[:4], uint32(len(s)))
+		msg.Put(buf[:4])
+		msg.PutString(s)
+		msg.Put(buf[4:5]) // NUL.
 		sigOffset = 1
 
 	case 'u': // uint32
-		_AppendUint32(buff, val.(uint32))
+		msg.Round(4)
+		msg.Endianness.PutUint32(buf[:4], val.(uint32))
+		msg.Put(buf[:4])
 		sigOffset = 1
 
 	case 'i': // int32
-		_AppendInt32(buff, val.(int32))
+		msg.Round(4)
+		msg.Endianness.PutUint32(buf[:4], uint32(val.(int32)))
+		msg.Put(buf[:4])
 		sigOffset = 1
 
 	case 'a': // ary
 		sigBlock, _ := _GetSigBlock(sig, 1)
-		_AppendArray(buff, 1, func(b *bytes.Buffer) {
+		appendArray(msg, 1, func(msg *msgData) {
 			if slice, ok := val.([]interface{}); ok && slice != nil {
 				for _, v := range slice {
-					_AppendValue(b, sigBlock, v)
+					appendValue(msg, sigBlock, v)
 				}
 			}
 		})
 		sigOffset = 1 + len(sigBlock)
 
 	case '(': // struct FIXME: nested struct not support
-		_AppendAlign(8, buff)
+		msg.Round(8)
 		structSig, _ := _GetStructSig(sig, 0)
 		for i, s := range structSig {
-			_AppendValue(buff, string(s), val.([]interface{})[i])
+			appendValue(msg, string(s), val.([]interface{})[i])
 		}
 		sigOffset = 2 + len(structSig)
 
 	case '{':
-		_AppendAlign(8, buff)
+		msg.Round(8)
 		dictSig, _ := _GetDictSig(sig, 0)
 		for i, s := range dictSig {
-			_AppendValue(buff, string(s), val.([]interface{})[i])
+			appendValue(msg, string(s), val.([]interface{})[i])
 		}
 		sigOffset = 2 + len(dictSig)
 	}
@@ -117,12 +88,12 @@ func _AppendValue(buff *bytes.Buffer, sig string, val interface{}) (sigOffset in
 	return
 }
 
-func _AppendParamsData(buff *bytes.Buffer, sig string, params []interface{}) {
+func appendParamsData(msg *msgData, sig string, params []interface{}) {
 	sigOffset := 0
 	prmsOffset := 0
 	sigLen := len(sig)
 	for ; sigOffset < sigLen; prmsOffset++ {
-		offset, _ := _AppendValue(buff, sig[sigOffset:len(sig)], params[prmsOffset])
+		offset, _ := appendValue(msg, sig[sigOffset:len(sig)], params[prmsOffset])
 		sigOffset += offset
 	}
 }
