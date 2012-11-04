@@ -326,7 +326,7 @@ func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
 	}
 
 	// Prepare response channel.
-	seri := uint32(msg.serial)
+	seri := msg.serial
 	replyChan := make(chan []byte, 1)
 	p.replyChans[seri] = replyChan
 	_, err = p.conn.Write(rawmsg)

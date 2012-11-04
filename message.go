@@ -2,7 +2,7 @@ package dbus
 
 import (
 	"encoding/binary"
-	"sync"
+	"sync/atomic"
 )
 
 // See the D-Bus tutorial for information about message types.
@@ -45,28 +45,23 @@ type Message struct {
 	Member      string
 	Sig         string
 	Params      []interface{}
-	serial      int
+	serial      uint32
 	replySerial uint32
 	ErrorName   string
 	//	Sender;
 }
 
-var serialMutex sync.Mutex
-var messageSerial = int(0)
+var messageSerial = uint32(0)
 
-func _GetNewSerial() int {
-	serialMutex.Lock()
-	messageSerial++
-	serial := messageSerial
-	serialMutex.Unlock()
-	return serial
+func generateSerial() uint32 {
+	return atomic.AddUint32(&messageSerial, 1)
 }
 
 // Create a new message with Flags == 0 and Protocol == 1.
 func NewMessage() *Message {
 	msg := new(Message)
 
-	msg.serial = _GetNewSerial()
+	msg.serial = generateSerial()
 	msg.replySerial = 0
 	msg.Flags = 0
 	msg.Protocol = 1
@@ -93,7 +88,7 @@ func (p *Message) _BufferToMessage(buff []byte) (int, error) {
 	p.Flags = MessageFlag(hdr.Flags)
 	p.Protocol = int(hdr.Protocol)
 	p.bodyLength = int(hdr.BodyLength)
-	p.serial = int(hdr.Serial)
+	p.serial = hdr.Serial
 
 	p.Path = string(flds.Path)
 	p.Iface = flds.Interface
