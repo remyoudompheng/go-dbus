@@ -295,7 +295,7 @@ func popMessage(r *bufio.Reader) (msg []byte, serial uint32, err error) {
 	}
 
 	// Find reply serial.
-	decoder := &msgData{Endianness: order, Data: msg}
+	decoder := &msgData{ByteOrder: order, Data: msg}
 	_, flds, _ := decoder.scanHeader()
 	return msg, flds.ReplySerial, nil
 }

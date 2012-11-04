@@ -2,6 +2,7 @@ package dbus
 
 import (
 	"encoding/binary"
+	"reflect"
 	"sync/atomic"
 )
 
@@ -116,6 +117,17 @@ func (p *Message) parseParams() (err error) {
 		p.Params, _, err = Parse(p.raw, p.Sig, 0)
 	}
 	return
+}
+
+// unmarshalReflect unmarshals the message paylaod in a reflective
+// manner.
+func (p *Message) unmarshalReflect(out ...interface{}) error {
+	msg := &msgData{ByteOrder: p.byteOrder, Data: p.raw, Idx: 0}
+      outv := make([]reflect.Value, len(out))
+      for i := range outv {
+            outv[i] = reflect.ValueOf(out[i]).Elem()
+      }
+	return msg.scanMany(p.Sig, outv...)
 }
 
 func unmarshal(buff []byte) (*Message, error) {
