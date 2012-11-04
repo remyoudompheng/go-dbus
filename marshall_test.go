@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func parseSig(s string) signature {
+      sig, rest, err := parseOneSignature(s)
+      if err != nil {
+            panic(err)
+      }
+      if rest != "" {
+            panic("trailing characters")
+      }
+      return sig
+}
+
 func TestAppendArray(t *testing.T) {
 	teststr := "\x01\x02\x03\x04\x05\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x02"
 
@@ -34,8 +45,8 @@ func TestAppendValue(t *testing.T) {
 	buff := new(msgData)
 	buff.Endianness = binary.LittleEndian
 
-	appendValue(buff, "s", "string")
-	appendValue(buff, "s", "test2")
+	appendValue(buff, parseSig("s"), "string")
+	appendValue(buff, parseSig("s"), "test2")
 	ref := []byte("\x06\x00\x00\x00string\x00\x00\x05\x00\x00\x00test2\x00")
 	if !bytes.Equal(ref, buff.Data) {
 		t.Errorf("got\n%q\nwant\n%q", buff.Data, ref)
@@ -46,59 +57,11 @@ func TestAppendValue(t *testing.T) {
 	slice = append(slice, []interface{}{"test1", uint32(1)})
 	slice = append(slice, []interface{}{"test2", uint32(2)})
 	slice = append(slice, []interface{}{"test3", uint32(3)})
-	appendValue(buff, "a(su)", slice)
+	appendValue(buff, parseSig("a(su)"), slice)
 	ref2 := []byte("\x34\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00test1\x00\x00\x00\x01\x00\x00\x00\x05\x00\x00\x00test2\x00\x00\x00\x02\x00\x00\x00\x05\x00\x00\x00test3\x00\x00\x00\x03\x00\x00\x00")
 	if !bytes.Equal(ref2, buff.Data) {
 		t.Errorf("got\n%q\nwant\n%q", buff.Data, ref2)
 	}
-}
-
-func TestGetStructSig(t *testing.T) {
-	var str string
-	var e error
-	str, _ = _GetStructSig("(yyy)(yyy)", 0)
-	if "yyy" != str {
-		t.Error("#1 Failed:", str)
-	}
-
-	str, _ = _GetStructSig("(y(ppp))yy", 0)
-	if "y(ppp)" != str {
-		t.Error("#2 Failed:", str)
-	}
-
-	str, _ = _GetStructSig("((test))yy", 0)
-	if "(test)" != str {
-		t.Error("#3 Failed:", str)
-	}
-
-	str, _ = _GetStructSig("123((test))yy", 3)
-	if "(test)" != str {
-		t.Error("#4 Failed:", str)
-	}
-
-	_, e = _GetStructSig("((test)(test)", 0)
-	if e == nil {
-		t.Error("#5 Failed")
-	}
-
-	_, e = _GetStructSig("((test(test", 0)
-	if e == nil {
-		t.Error("#6 Failed")
-	}
-
-}
-
-func TestGetSigBlock(t *testing.T) {
-	var str string
-	str, _ = _GetSigBlock("123a3", 3)
-	if "a" != str {
-		t.Error("#1 Failed:", str)
-	}
-	str, _ = _GetSigBlock("123(abc)", 3)
-	if "(abc)" != str {
-		t.Error("#2 Failed:", str)
-	}
-
 }
 
 // sliceRef([1,2,3], 1) => 2
@@ -227,4 +190,51 @@ func TestReflect(t *testing.T) {
 	hdr, flds, _ := msg.scanHeader()
 	t.Logf("%+v", hdr)
 	t.Logf("%+v", flds)
+}
+
+type sigTest struct {
+	s   string
+	sig signature
+}
+
+const isig = basicSig('i')
+
+var sigTests = []sigTest{
+	{"i", isig},
+	{"(ii)", structSig{isig, isig}},
+	{"(i(ii))", structSig{isig, structSig{isig, isig}}},
+	{"ai", arraySig{Elem: isig}},
+	{"a(ii)", arraySig{Elem: structSig{isig, isig}}},
+	{"aai", arraySig{Elem: arraySig{Elem: isig}}},
+	// Incomplete
+	{"aa", nil},
+	{"(ii", nil},
+}
+
+func TestParseOneSig(t *testing.T) {
+	for _, test := range sigTests {
+		sig, rest, err := parseOneSignature(test.s)
+		if err != nil {
+			t.Logf("parsing %q gives %s", test.s, err)
+			sig, rest = nil, ""
+		}
+		if rest != "" {
+			t.Errorf("parsing of %q did not consume full input", test.s)
+		}
+		if !reflect.DeepEqual(test.sig, sig) {
+			t.Errorf("got %#v, expected %#v", test.sig, sig)
+		}
+	}
+}
+
+func TestSignatureRoundTrip(t *testing.T) {
+	for _, test := range sigTests {
+		if test.sig == nil {
+			continue
+		}
+		sig, _, _ := parseOneSignature(test.s)
+		if test.s != sig.String() {
+			t.Errorf("expected %s, got %s", test.s, sig)
+		}
+	}
 }

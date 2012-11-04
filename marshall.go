@@ -6,8 +6,124 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"strings"
 )
+
+// Signature parsing.
+
+type signature interface {
+	String() string
+	istype()
+}
+
+type basicSig byte
+type structSig []signature
+type arraySig struct{ Elem signature }
+type dictSig struct {
+	Key   basicSig
+	Value signature
+}
+
+func (sig basicSig) String() string { return string(sig) }
+
+func (sig structSig) String() string {
+	buf := make([]byte, 0, len(sig))
+	buf = append(buf, '(')
+	for _, s := range sig {
+		buf = append(buf, s.String()...)
+	}
+	buf = append(buf, ')')
+	return string(buf)
+}
+
+func (sig arraySig) String() string { return "a" + sig.Elem.String() }
+
+func (sig dictSig) String() string {
+	return "a{" + string(sig.Key) + sig.Value.String() + "}"
+}
+
+func (basicSig) istype()  {}
+func (arraySig) istype()  {}
+func (structSig) istype() {}
+func (dictSig) istype()   {}
+
+func parseSignature(s string) (ss []signature, err error) {
+	for len(s) > 0 {
+		sig, rest, err := parseOneSignature(s)
+		if err != nil {
+			return nil, err
+		}
+		ss = append(ss, sig)
+		s = rest
+	}
+	return ss, nil
+}
+
+var (
+	errMissingCloseParen = errors.New("missing ')' at end of struct signature")
+)
+
+func parseOneSignature(s string) (sig signature, rest string, err error) {
+	if len(s) == 0 {
+		return nil, "", fmt.Errorf("missing type")
+	}
+	switch s[0] {
+	case 'b', 'y',
+		'n', 'q', // 16-bit
+		'i', 'u', // 32-bit
+		'x', 't', // 64-bit
+		'd',           // float
+		's', 'o', 'g', // string
+		'v':
+		return basicSig(s[0]), s[1:], nil
+	case '(':
+		s = s[1:]
+		var sigs []signature
+		for len(s) > 0 && s[0] != ')' {
+			sig, rest, err := parseOneSignature(s)
+			if err != nil {
+				return nil, s, err
+			}
+			sigs = append(sigs, sig)
+			s = rest
+		}
+		if len(s) == 0 || s[0] != ')' {
+			return nil, "", errMissingCloseParen
+		}
+		return structSig(sigs), s[1:], nil
+	case 'a':
+		if len(s) > 1 && s[1] == '{' {
+			// Dictionary.
+		} else {
+			elem, rest, err := parseOneSignature(s[1:])
+			if err != nil {
+				return nil, "", err
+			}
+			return arraySig{Elem: elem}, rest, nil
+		}
+	}
+	return nil, "", fmt.Errorf("invalid signature %q", s)
+}
+
+func mustParseSig(s string) signature {
+	sig, rest, err := parseOneSignature(s)
+	if err != nil {
+		panic(err)
+	}
+	if rest != "" {
+		panic("trailing characters")
+	}
+	return sig
+}
+
+func mustParseSigs(s string) []signature {
+	sigs, err := parseSignature(s)
+	if err != nil {
+		panic(err)
+	}
+	return sigs
+}
+
+// D-Bus wire format.
 
 var errIndex = errors.New("index error")
 
@@ -28,19 +144,47 @@ func appendArray(msg *msgData, align int, proc func(*msgData)) {
 	msg.Endianness.PutUint32(msg.Data[start-4:start], uint32(length))
 }
 
-func appendValue(msg *msgData, sig string, val interface{}) (sigOffset int, e error) {
-	if len(sig) == 0 {
-		return 0, errors.New("Invalid Signature")
-	}
-
-	e = nil
+func appendValue(msg *msgData, sig signature, val interface{}) (err error) {
 	var buf [8]byte
-
-	switch sig[0] {
+	// complex types.
+	switch sig := sig.(type) {
+	case basicSig:
+		break
+	case arraySig:
+		vals := val.([]interface{})
+		appendArray(msg, 1, func(msg *msgData) {
+			for _, v := range vals {
+				appendValue(msg, sig.Elem, v)
+			}
+		})
+		return nil
+	case dictSig:
+		vals := val.([]interface{})
+		appendArray(msg, 1, func(msg *msgData) {
+			for _, v := range vals {
+				v := v.([]interface{})
+				key, value := v[0], v[1]
+				msg.Round(8)
+				appendValue(msg, sig.Key, key)
+				appendValue(msg, sig.Value, value)
+			}
+		})
+		return nil
+	case structSig:
+		msg.Round(8)
+		vals := val.([]interface{})
+		for i, fldsig := range sig {
+			appendValue(msg, fldsig, vals[i])
+		}
+		return nil
+	default:
+		panic(fmt.Errorf("invalid signature type %T", sig))
+	}
+	// basic types.
+	switch sig := sig.(basicSig); sig {
 	case 'y': // byte
 		buf[0] = val.(byte)
 		msg.Put(buf[:1])
-		sigOffset = 1
 
 	case 's': // string
 		msg.Round(4)
@@ -49,128 +193,34 @@ func appendValue(msg *msgData, sig string, val interface{}) (sigOffset int, e er
 		msg.Put(buf[:4])
 		msg.PutString(s)
 		msg.Put(buf[4:5]) // NUL.
-		sigOffset = 1
 
 	case 'u': // uint32
 		msg.Round(4)
 		msg.Endianness.PutUint32(buf[:4], val.(uint32))
 		msg.Put(buf[:4])
-		sigOffset = 1
 
 	case 'i': // int32
 		msg.Round(4)
 		msg.Endianness.PutUint32(buf[:4], uint32(val.(int32)))
 		msg.Put(buf[:4])
-		sigOffset = 1
-
-	case 'a': // ary
-		sigBlock, _ := _GetSigBlock(sig, 1)
-		appendArray(msg, 1, func(msg *msgData) {
-			if slice, ok := val.([]interface{}); ok && slice != nil {
-				for _, v := range slice {
-					appendValue(msg, sigBlock, v)
-				}
-			}
-		})
-		sigOffset = 1 + len(sigBlock)
-
-	case '(': // struct FIXME: nested struct not support
-		msg.Round(8)
-		structSig, _ := _GetStructSig(sig, 0)
-		for i, s := range structSig {
-			appendValue(msg, string(s), val.([]interface{})[i])
-		}
-		sigOffset = 2 + len(structSig)
-
-	case '{':
-		msg.Round(8)
-		dictSig, _ := _GetDictSig(sig, 0)
-		for i, s := range dictSig {
-			appendValue(msg, string(s), val.([]interface{})[i])
-		}
-		sigOffset = 2 + len(dictSig)
+	default:
+		return fmt.Errorf("unsupported type %q", byte(sig))
 	}
 
 	return
 }
 
 func appendParamsData(msg *msgData, sig string, params []interface{}) {
-	sigOffset := 0
-	prmsOffset := 0
-	sigLen := len(sig)
-	for ; sigOffset < sigLen; prmsOffset++ {
-		offset, _ := appendValue(msg, sig[sigOffset:len(sig)], params[prmsOffset])
-		sigOffset += offset
+	sigs, err := parseSignature(sig)
+	if err != nil {
+		panic(err)
 	}
-}
-
-func _GetInt32(buff []byte, index int) (int32, error) {
-	if len(buff) < index+4 {
-		return 0, errIndex
-	}
-	return int32(binary.LittleEndian.Uint32(buff[index:])), nil
-}
-
-func _GetStructSig(sig string, startIdx int) (string, error) {
-	if len(sig) <= startIdx || '(' != sig[startIdx] {
-		return "<nil>", errIndex
-	}
-	sigIdx := startIdx + 1
-	for depth := 0; sigIdx < len(sig); sigIdx++ {
-		switch sig[sigIdx] {
-		case ')':
-			if depth == 0 {
-				return sig[startIdx+1 : sigIdx], nil
-			}
-			depth--
-		case '(':
-			depth++
+	for i, sigelem := range sigs {
+		err = appendValue(msg, sigelem, params[i])
+		if err != nil {
+			panic(err)
 		}
 	}
-
-	return "<nil>", errors.New("parse error")
-}
-
-func _GetDictSig(sig string, startIdx int) (string, error) {
-	if len(sig) <= startIdx || '{' != sig[startIdx] {
-		return "<nil>", errIndex
-	}
-	sigIdx := startIdx + 1
-	for depth := 0; sigIdx < len(sig); sigIdx++ {
-		switch sig[sigIdx] {
-		case '}':
-			if depth == 0 {
-				return sig[startIdx+1 : sigIdx], nil
-			}
-			depth--
-		case '{':
-			depth++
-		}
-	}
-
-	return "<nil>", errors.New("parse error")
-}
-
-func _GetSigBlock(sig string, index int) (string, error) {
-	switch sig[index] {
-	case '(':
-		str, e := _GetStructSig(sig, index)
-		if e != nil {
-			return "", e
-		}
-		return strings.Join([]string{"(", str, ")"}, ""), nil
-
-	case '{':
-		str, e := _GetDictSig(sig, index)
-		if e != nil {
-			return "", e
-		}
-		return strings.Join([]string{"{", str, "}"}, ""), nil
-
-	}
-
-	// default
-	return sig[index : index+1], nil
 }
 
 func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e error) {
@@ -184,126 +234,114 @@ func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e erro
 
 func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int, err error) {
 	msg := &msgData{Endianness: binary.LittleEndian, Data: buff, Idx: index}
-	defer func() { bufIdx = msg.Idx }()
-	slice = make([]interface{}, 0, len(sig))
-	for sigIdx := 0; sigIdx < len(sig); {
-		bufIdx = msg.Idx
-		switch sig[sigIdx] {
-		case 'b': // bool
-			msg.Round(4)
-			x := msg.Endianness.Uint32(msg.Next(4))
-			slice = append(slice, bool(x != 0))
-			sigIdx++
+	sigs, err := parseSignature(sig)
+	if err != nil {
+		return
+	}
+	slice, err = parseVariants(msg, sigs)
+	return slice, msg.Idx, err
+}
 
-		case 'y': // byte
-			slice = append(slice, msg.Data[msg.Idx])
-			msg.Idx++
-			sigIdx++
-
-		case 'n': // int16
-			msg.Round(2)
-			x := msg.Endianness.Uint16(msg.Next(2))
-			slice = append(slice, int16(x))
-			sigIdx++
-
-		case 'q': // uint16
-			msg.Round(2)
-			x := msg.Endianness.Uint16(msg.Next(2))
-			slice = append(slice, uint16(x))
-			sigIdx++
-
-		case 'u': // uint32
-			msg.Round(4)
-			x := msg.Endianness.Uint32(msg.Next(4))
-			slice = append(slice, uint32(x))
-			sigIdx++
-
-		case 's', 'o': // string, object
-			msg.Round(4)
-			l := msg.Endianness.Uint32(msg.Next(4))
-			s := msg.Next(int(l) + 1)
-			slice = append(slice, string(s[:l]))
-			sigIdx++
-
-		case 'g': // signature
-			l := msg.Next(1)[0]
-			s := msg.Next(int(l) + 1)
-			slice = append(slice, string(s[:l]))
-			sigIdx++
-
-		case 'a': // array
-			sigBlock, e := _GetSigBlock(sig, sigIdx+1)
-			if e != nil {
-				err = e
-				return
-			}
-
+func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err error) {
+	slice = make([]interface{}, 0, len(sigs))
+	for _, sig := range sigs {
+		switch sig := sig.(type) {
+		case basicSig:
+			break
+		case arraySig:
 			msg.Round(4)
 			// length in bytes.
 			l := msg.Endianness.Uint32(msg.Next(4))
 			end := msg.Idx + int(l)
 			tmpSlice := make([]interface{}, 0)
 			var arrValues []interface{}
+			elemsig := []signature{sig.Elem}
 			for msg.Idx < end {
-				arrValues, msg.Idx, err = Parse(msg.Data, sigBlock, msg.Idx)
+				arrValues, err = parseVariants(msg, elemsig)
 				if err != nil {
 					return
 				}
 				tmpSlice = append(tmpSlice, arrValues...)
 			}
-			msg.Idx = end
-			sigIdx += (1 + len(sigBlock))
 			slice = append(slice, tmpSlice)
-
-		case '(': // struct
+			continue
+		case structSig:
 			msg.Round(8)
-			stSig, e := _GetStructSig(sig, sigIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
 			var structVals []interface{}
-			structVals, msg.Idx, err = Parse(msg.Data, stSig, msg.Idx)
+			structVals, err = parseVariants(msg, sig)
 			if err != nil {
 				return
 			}
-
-			sigIdx += (len(stSig) + 2)
 			slice = append(slice, structVals)
-
-		case '{': // dict
-			msg.Round(8)
-			stSig, e := _GetDictSig(sig, sigIdx)
-			if e != nil {
-				err = e
-				return
-			}
-
+			continue
+		case dictSig:
+			msg.Round(4)
+			// length in bytes.
+			l := msg.Endianness.Uint32(msg.Next(4))
+			end := msg.Idx + int(l)
 			var dictVals []interface{}
-			dictVals, msg.Idx, err = Parse(msg.Data, stSig, msg.Idx)
-			if err != nil {
-				return
+			elemsig := []signature{sig.Key, sig.Value}
+			for msg.Idx < end {
+				msg.Round(8)
+				kv, err := parseVariants(msg, elemsig)
+				if err != nil {
+					return nil, err
+				}
+				dictVals = append(dictVals, kv)
 			}
-
-			sigIdx += (len(stSig) + 2)
 			slice = append(slice, dictVals)
+			continue
+		default:
+			panic(fmt.Errorf("invalid signature type %T", sig))
+		}
+		switch sig := sig.(basicSig); sig {
+		case 'b': // bool
+			msg.Round(4)
+			x := msg.Endianness.Uint32(msg.Next(4))
+			slice = append(slice, bool(x != 0))
+
+		case 'y': // byte
+			slice = append(slice, msg.Data[msg.Idx])
+			msg.Idx++
+
+		case 'n': // int16
+			msg.Round(2)
+			x := msg.Endianness.Uint16(msg.Next(2))
+			slice = append(slice, int16(x))
+
+		case 'q': // uint16
+			msg.Round(2)
+			x := msg.Endianness.Uint16(msg.Next(2))
+			slice = append(slice, uint16(x))
+
+		case 'u': // uint32
+			msg.Round(4)
+			x := msg.Endianness.Uint32(msg.Next(4))
+			slice = append(slice, uint32(x))
+
+		case 's', 'o': // string, object
+			msg.Round(4)
+			l := msg.Endianness.Uint32(msg.Next(4))
+			s := msg.Next(int(l) + 1)
+			slice = append(slice, string(s[:l]))
+
+		case 'g': // signature
+			l := msg.Next(1)[0]
+			s := msg.Next(int(l) + 1)
+			slice = append(slice, string(s[:l]))
 
 		case 'v': // variant
-			vals, idx, e := _GetVariant(buff, bufIdx)
+			vals, idx, e := _GetVariant(msg.Data, msg.Idx)
+			msg.Idx = idx
 			if e != nil {
 				err = e
 				return
 			}
-
-			bufIdx = idx
-			sigIdx++
 			slice = append(slice, vals...)
-			msg.Idx = bufIdx
 
 		default:
-			fmt.Println(sig[sigIdx])
-			return nil, index, errors.New("unknown type")
+			fmt.Println(sig)
+			return nil, errors.New("unknown type")
 		}
 	}
 	return
@@ -321,7 +359,6 @@ type msgHeader struct {
 }
 
 type ObjectPath string
-type Signature string
 
 type msgHeaderFields struct {
 	Path        ObjectPath // field 1
@@ -331,7 +368,7 @@ type msgHeaderFields struct {
 	ReplySerial uint32
 	Destination string
 	Sender      string
-	Signature   Signature
+	Signature   string
 	NumFD       uint32 // field 9
 }
 
@@ -403,29 +440,21 @@ func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error
 			return
 		}
 		// A variant is a signature and value.
-		var fldSig Signature
+		var fldSig string
 		msg.scan("g", &fldSig)
-		msg.scanValue(fldSig, fldVal.Field(int(b)-1))
+		msg.scan(fldSig, fldVal.Field(int(b)-1).Addr().Interface())
 	}
 	return
 }
 
-var fldSigs = []Signature{
-	1: "o",
-	2: "s",
-	3: "s",
-	4: "s",
-	5: "u",
-	6: "s",
-	7: "s",
-	8: "g",
-	9: "u",
-}
+// the Dbus signatures for msgHeader and msgHeaderFields.
+var hdrSigs = mustParseSig("(yyyyuu)")
+var fldSigs = mustParseSigs("osssussgu")
 
 func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) (err error) {
 	defer catchPanicErr(&err)
 	var buf [8]byte
-	msg.put("(yyyyuu)", hdr)
+	msg.putValue(hdrSigs, reflect.ValueOf(hdr))
 	// Now an array of byte and variant.
 	msg.Put(buf[:4])
 	fldStart := msg.Idx
@@ -440,8 +469,8 @@ func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) (err error) {
 		buf[0] = byte(i + 1)
 		msg.Put(buf[:1])
 		// field value.
-		fldSig := fldSigs[i+1]
-		msg.put("g", fldSig)
+		fldSig := fldSigs[i]
+		msg.put("g", fldSig.String())
 		msg.putValue(fldSig, elem)
 	}
 	length := msg.Idx - fldStart
@@ -449,17 +478,39 @@ func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) (err error) {
 	return nil
 }
 
-func (msg *msgData) scan(sig Signature, val interface{}) (err error) {
+// scan is a helper taking a signature string.
+func (msg *msgData) scan(sigstr string, val interface{}) (err error) {
+	sig, rest, err := parseOneSignature(sigstr)
+	if rest != "" {
+		return fmt.Errorf("trailing signature %q", rest)
+	}
+	if err != nil {
+		return
+	}
 	return msg.scanValue(sig, reflect.ValueOf(val).Elem())
 }
 
-func (msg *msgData) scanMany(sig Signature, val ...reflect.Value) (err error) {
-	i := 0
-	for len(sig) > 0 {
-		item, _ := _GetSigBlock(string(sig), 0)
-		sig = sig[len(item):]
-		msg.scanValue(Signature(item), val[i])
-		i++
+func (msg *msgData) put(sigstr string, val interface{}) (err error) {
+	sig, rest, err := parseOneSignature(sigstr)
+	if rest != "" {
+		return fmt.Errorf("trailing signature %q", rest)
+	}
+	if err != nil {
+		return
+	}
+	if _, ok := val.(reflect.Value); ok {
+		panic("put called with reflect.Value argument")
+	}
+	return msg.putValue(sig, reflect.ValueOf(val))
+}
+
+func (msg *msgData) scanMany(s string, val ...reflect.Value) (err error) {
+	sigs, err := parseSignature(s)
+	if err != nil {
+		return err
+	}
+	for i, sig := range sigs {
+		msg.scanValue(sig, val[i])
 	}
 	return
 }
@@ -467,9 +518,33 @@ func (msg *msgData) scanMany(sig Signature, val ...reflect.Value) (err error) {
 // scan reads data from buf according to the first item in signature sig and fills val.
 // It returns the number of bytes consumed.
 // http://dbus.freedesktop.org/doc/dbus-specification.html#type-system
-func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
+func (msg *msgData) scanValue(sig signature, val reflect.Value) (err error) {
 	defer catchPanicErr(&err)
-	switch sig[0] {
+	switch sig := sig.(type) {
+	case basicSig:
+		break
+	case arraySig:
+		msg.Round(4)
+		// length in bytes.
+		l := msg.Endianness.Uint32(msg.Next(4))
+		end := msg.Idx + int(l)
+		for msg.Idx < end {
+			elemval := reflect.New(val.Type().Elem()).Elem()
+			_ = msg.scanValue(sig.Elem, elemval)
+			v := reflect.Append(val, elemval)
+			val.Set(v)
+		}
+	case structSig:
+		msg.Round(8)
+		for i, fldsig := range sig {
+			msg.scanValue(fldsig, val.Field(i))
+		}
+	case dictSig:
+		panic("unsupported dictionaries")
+	default:
+		panic("impossible signature type")
+	}
+	switch sig.(basicSig) {
 	case 'y': // byte
 		val.SetUint(uint64(msg.Data[msg.Idx]))
 		msg.Idx++
@@ -521,28 +596,6 @@ func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
 		s := msg.Next(int(l) + 1)
 		val.SetString(string(s[:l]))
 
-	case 'a': // array
-		elemsig := sig[1:]
-		msg.Round(4)
-		// length in bytes.
-		l := msg.Endianness.Uint32(msg.Next(4))
-		end := msg.Idx + int(l)
-		for msg.Idx < end {
-			elemval := reflect.New(val.Type().Elem()).Elem()
-			_ = msg.scanValue(elemsig, elemval)
-			v := reflect.Append(val, elemval)
-			val.Set(v)
-		}
-
-	case '(': // struct
-		msg.Round(8)
-		structSig, _ := _GetSigBlock(string(sig), 0)
-		fields := make([]reflect.Value, val.NumField())
-		for i := range fields {
-			fields[i] = val.Field(i)
-		}
-		msg.scanMany(sig[1:len(structSig)-1], fields...)
-
 	default:
 		panic("unsupported")
 		//case '{': // dict
@@ -551,14 +604,38 @@ func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
 	return nil
 }
 
-func (msg *msgData) put(sig Signature, val interface{}) (err error) {
-	return msg.putValue(sig, reflect.ValueOf(val))
-}
-
-func (msg *msgData) putValue(sig Signature, val reflect.Value) (err error) {
+func (msg *msgData) putValue(sig signature, val reflect.Value) (err error) {
 	defer catchPanicErr(&err)
 	var buf [8]byte
-	switch sig[0] {
+
+	switch sig := sig.(type) {
+	case basicSig:
+		break
+	case arraySig:
+		msg.Round(4)
+		// length in bytes.
+		idx := msg.Idx
+		msg.Put(buf[:4])
+		begin := msg.Idx
+		for i, imax := 0, val.Len(); i < imax; i++ {
+			elem := val.Index(i)
+			msg.putValue(sig.Elem, elem)
+		}
+		length := msg.Idx - begin
+		msg.Endianness.PutUint32(msg.Data[idx:idx+4], uint32(length))
+
+	case structSig:
+		msg.Round(8)
+		for i, fldsig := range sig {
+			fld := val.Field(i)
+			msg.putValue(fldsig, fld)
+		}
+	case dictSig:
+		panic("dictionaries are unsupported")
+	default:
+		panic("impossible signature type")
+	}
+	switch sig.(basicSig) {
 	case 'y': // byte
 		buf[0] = byte(val.Uint())
 		msg.Put(buf[:1])
@@ -610,36 +687,16 @@ func (msg *msgData) putValue(sig Signature, val reflect.Value) (err error) {
 		msg.Put(buf[5:6]) // Nul byte.
 
 	case 'g': // signature string
-		s := val.String()
+		var s string
+		if v, ok := val.Interface().(signature); ok {
+			s = v.String()
+		} else {
+			s = val.String()
+		}
 		buf[0] = byte(len(s))
 		msg.Put(buf[:1])
 		msg.PutString(s)
 		msg.Put(buf[1:2]) // NUL
-
-	case 'a': // array
-		elemsig := sig[1:]
-		msg.Round(4)
-		// length in bytes.
-		idx := msg.Idx
-		msg.Put(buf[:4])
-		begin := msg.Idx
-		for i, imax := 0, val.Len(); i < imax; i++ {
-			elem := val.Index(i)
-			msg.putValue(elemsig, elem)
-		}
-		length := msg.Idx - begin
-		msg.Endianness.PutUint32(msg.Data[idx:idx+4], uint32(length))
-
-	case '(': // struct
-		msg.Round(8)
-		structSig, _ := _GetSigBlock(string(sig), 0)
-		structSig = structSig[1 : len(structSig)-1]
-		for i, imax := 0, val.NumField(); i < imax; i++ {
-			fldSig, _ := _GetSigBlock(structSig, 0)
-			structSig = structSig[len(fldSig):]
-			fld := val.Field(i)
-			msg.putValue(Signature(fldSig), fld)
-		}
 
 	default:
 		panic("unsupported")
