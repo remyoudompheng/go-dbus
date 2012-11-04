@@ -112,10 +112,19 @@ func min(l, r int) int {
 	return r
 }
 
-func (p *Connection) _Authenticate(mech Authenticator) error {
+func (p *Connection) authenticate(mech Authenticator) error {
 	inStream := bufio.NewReader(p.conn)
-	msg := bytes.Join([][]byte{[]byte("AUTH"), mech.Mechanism(), mech.InitialResponse()}, []byte(" "))
-	_, err := p.conn.Write(append(msg, "\r\n"...))
+	msg := make([]byte, 0, 80)
+	msg = append(msg, "AUTH"...)
+	msg = append(msg, ' ')
+	msg = append(msg, mech.Mechanism()...)
+	msg = append(msg, ' ')
+	msg = append(msg, mech.InitialResponse()...)
+	msg = append(msg, "\r\n"...)
+	_, err := p.conn.Write(msg)
+	if err != nil {
+		return err
+	}
 
 	for {
 		mesg, _, _ := inStream.ReadLine()
