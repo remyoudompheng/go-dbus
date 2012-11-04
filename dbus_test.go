@@ -1,6 +1,8 @@
 package dbus
 
 import (
+	"fmt"
+	"log"
 	"testing"
 )
 
@@ -55,4 +57,28 @@ func TestDBus(t *testing.T) {
 		t.Logf("call test %d", i)
 		testCall(con, t, test)
 	}
+}
+
+func ExampleConnection_Call(t *testing.T) {
+	conn, err := Connect(SystemBus)
+	if err != nil {
+		log.Fatal(err)
+	}
+	conn.Authenticate()
+	method, err := conn.
+		Object("org.freedesktop.DBus", "/org/freedesktop/DBus").
+		//Object("org.freedesktop.systemd1", "/org/freedesktop/systemd1").
+		Interface("org.freedesktop.DBus.Introspectable").
+		Method("Introspect")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	reply, err := conn.call(method, nil, false)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var data string
+	reply.Unmarshal(&data)
+	fmt.Println(data)
 }

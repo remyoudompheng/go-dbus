@@ -104,7 +104,7 @@ func BenchmarkMessage_UnmarshalReflect1(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		msg.unmarshalReflect(&data)
+		msg.Unmarshal(&data)
 	}
 	b.SetBytes(int64(len(testMsg2)))
 }

@@ -380,7 +380,7 @@ func (p *Connection) _GetIntrospect(dest string, path string) Introspect {
 
 	reply, err := p.sendSync(msg)
 	var introxml string
-	err = reply.unmarshalReflect(&introxml)
+	err = reply.Unmarshal(&introxml)
 	if err != nil {
 		// TODO: handle error.
 		return nil
@@ -427,27 +427,39 @@ func (p *Connection) _GetProxy() *Interface {
 	return iface
 }
 
-// Call a method with the given arguments.
-func (p *Connection) Call(method *Method, args ...interface{}) ([]interface{}, error) {
+func (p *Connection) call(method *Method, args []interface{}, reflect bool) (*Message, error) {
 	iface := method.iface
 	msg := NewMessage()
-
 	msg.Type = TypeMethodCall
 	msg.Path = iface.obj.path
 	msg.Iface = iface.name
 	msg.Dest = iface.obj.dest
 	msg.Member = method.data.GetName()
 	msg.Sig = method.data.GetInSignature()
-	if len(args) > 0 {
-		msg.Params = args[:]
-	}
 
-	reply, err := p.sendSync(msg)
+	msg.Params = args
+	msg.reflect = reflect
+	return p.sendSync(msg)
+}
+
+// Call a method with the given arguments. Complex arguments
+// like structs and arrays are represented by []interface{}
+// values.
+func (p *Connection) Call(method *Method, args ...interface{}) ([]interface{}, error) {
+	reply, err := p.call(method, args, false)
 	if err != nil {
 		return nil, err
 	}
 	err = reply.parseParams()
 	return reply.Params, err
+}
+
+// Invoke calls a method Call a method with the given arguments.
+// Complex arguments like structs and arrays are represented by Go structs
+// and slices. The out arguments can be fetched by calling
+// reply.Unmarshal.
+func (p *Connection) Invoke(method *Method, args ...interface{}) (reply *Message, err error) {
+	return p.call(method, args, true)
 }
 
 // Emit a signal with the given arguments.

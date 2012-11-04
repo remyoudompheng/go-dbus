@@ -53,6 +53,7 @@ type Message struct {
 	byteOrder binary.ByteOrder // Raw data byte order.
 	raw       []byte           // Raw data.
 	Params    []interface{}    // Unmarshaled contents.
+	reflect   bool             // Whether Params must be reflected.
 }
 
 var messageSerial = uint32(0)
@@ -119,14 +120,14 @@ func (p *Message) parseParams() (err error) {
 	return
 }
 
-// unmarshalReflect unmarshals the message paylaod in a reflective
+// Unmarshal unmarshals the message payload in a reflective
 // manner.
-func (p *Message) unmarshalReflect(out ...interface{}) error {
+func (p *Message) Unmarshal(out ...interface{}) error {
 	msg := &msgData{ByteOrder: p.byteOrder, Data: p.raw, Idx: 0}
-      outv := make([]reflect.Value, len(out))
-      for i := range outv {
-            outv[i] = reflect.ValueOf(out[i]).Elem()
-      }
+	outv := make([]reflect.Value, len(out))
+	for i := range outv {
+		outv[i] = reflect.ValueOf(out[i]).Elem()
+	}
 	return msg.scanMany(p.Sig, outv...)
 }
 
@@ -168,10 +169,31 @@ func (p *Message) _Marshal() ([]byte, error) {
 		return nil, err
 	}
 
+	// Build serialized payload.
 	submsg := &msgData{ByteOrder: binary.LittleEndian}
-	appendParamsData(submsg, p.Sig, p.Params)
-	msg.ByteOrder.PutUint32(msg.Data[4:8], uint32(len(submsg.Data)))
+	sigs, err := parseSignature(p.Sig)
+	if err != nil {
+		panic(err)
+	}
+	if !p.reflect {
+		// Unstructured representation.
+		for i, sigelem := range sigs {
+			err = appendValue(msg, sigelem, p.Params[i])
+			if err != nil {
+				panic(err)
+			}
+		}
+	} else {
+		// Reflectable representation.
+		for i, sigelem := range sigs {
+			err = submsg.putValue(sigelem, reflect.ValueOf(p.Params[i]))
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
 
+	msg.ByteOrder.PutUint32(msg.Data[4:8], uint32(len(submsg.Data)))
 	msg.Round(8)
 	msg.Put(submsg.Data)
 

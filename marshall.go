@@ -210,19 +210,6 @@ func appendValue(msg *msgData, sig signature, val interface{}) (err error) {
 	return
 }
 
-func appendParamsData(msg *msgData, sig string, params []interface{}) {
-	sigs, err := parseSignature(sig)
-	if err != nil {
-		panic(err)
-	}
-	for i, sigelem := range sigs {
-		err = appendValue(msg, sigelem, params[i])
-		if err != nil {
-			panic(err)
-		}
-	}
-}
-
 func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e error) {
 	retidx = index
 	sigSize := int(buff[retidx])
