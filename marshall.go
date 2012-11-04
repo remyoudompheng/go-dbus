@@ -11,6 +11,12 @@ import (
 
 var errIndex = errors.New("index error")
 
+type errOutOfRange struct{ Offset, Length int }
+
+func (err *errOutOfRange) Error() string {
+	return fmt.Sprintf("message index out of range (%d/%d)", err.Offset+1, err.Length)
+}
+
 func appendArray(msg *msgData, align int, proc func(*msgData)) {
 	var buf [4]byte
 	msg.Round(4)
@@ -349,8 +355,13 @@ func (msg *msgData) Round(rnd int) {
 }
 
 func (msg *msgData) Next(n int) []byte {
-	s := msg.Data[msg.Idx:]
-	msg.Idx += n
+	end := msg.Idx + n
+	if end > len(msg.Data) {
+		err := &errOutOfRange{Offset: end, Length: len(msg.Data)}
+		panic(error(err))
+	}
+	s := msg.Data[msg.Idx:end]
+	msg.Idx = end
 	return s
 }
 
@@ -375,6 +386,7 @@ func (msg *msgData) PutString(s string) {
 }
 
 func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error) {
+	defer catchPanicErr(&err)
 	// The fixed header.
 	msg.scan("(yyyyuu)", &hdr)
 	// Now an array of byte and variant.
@@ -407,6 +419,7 @@ var fldSigs = []Signature{
 }
 
 func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) error {
+	defer catchPanicErr(&err)
 	var buf [8]byte
 	msg.put("(yyyyuu)", hdr)
 	// Now an array of byte and variant.
@@ -451,6 +464,7 @@ func (msg *msgData) scanMany(sig Signature, val ...reflect.Value) (err error) {
 // It returns the number of bytes consumed.
 // http://dbus.freedesktop.org/doc/dbus-specification.html#type-system
 func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
+	defer catchPanicErr(&err)
 	switch sig[0] {
 	case 'y': // byte
 		val.SetUint(uint64(msg.Data[msg.Idx]))
@@ -527,7 +541,6 @@ func (msg *msgData) scanValue(sig Signature, val reflect.Value) (err error) {
 
 	default:
 		panic("unsupported")
-		//case '(': // struct
 		//case '{': // dict
 		//case 'h': // file descriptor
 	}
@@ -539,6 +552,7 @@ func (msg *msgData) put(sig Signature, val interface{}) (err error) {
 }
 
 func (msg *msgData) putValue(sig Signature, val reflect.Value) (err error) {
+	defer catchPanicErr(&err)
 	var buf [8]byte
 	switch sig[0] {
 	case 'y': // byte
@@ -625,9 +639,20 @@ func (msg *msgData) putValue(sig Signature, val reflect.Value) (err error) {
 
 	default:
 		panic("unsupported")
-		//case '(': // struct
 		//case '{': // dict
 		//case 'h': // file descriptor
 	}
 	return nil
+}
+
+func catchPanicErr(err *error) {
+	switch p := recover(); e := p.(type) {
+	case nil:
+		// OK.
+	case error:
+		*err = e
+	default:
+		// re-panic.
+		panic(p)
+	}
 }
