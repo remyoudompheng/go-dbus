@@ -44,11 +44,14 @@ type Message struct {
 	Iface       string
 	Member      string
 	Sig         string
-	Params      []interface{}
 	serial      uint32
 	replySerial uint32
 	ErrorName   string
 	//	Sender;
+
+	byteOrder binary.ByteOrder // Raw data byte order.
+	raw       []byte           // Raw data.
+	Params    []interface{}    // Unmarshaled contents.
 }
 
 var messageSerial = uint32(0)
@@ -71,9 +74,9 @@ func NewMessage() *Message {
 	return msg
 }
 
-func (p *Message) _BufferToMessage(buff []byte) (int, error) {
-	msg := &msgData{Data: buff, Idx: 0}
-	switch buff[0] {
+func newRawMessage(data []byte) (*Message, error) {
+	msg := &msgData{Data: data, Idx: 0}
+	switch data[0] {
 	case 'l':
 		msg.Endianness = binary.LittleEndian
 	case 'B':
@@ -81,40 +84,47 @@ func (p *Message) _BufferToMessage(buff []byte) (int, error) {
 	}
 	hdr, flds, err := msg.scanHeader()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	p.Type = MessageType(hdr.Type)
-	p.Flags = MessageFlag(hdr.Flags)
-	p.Protocol = int(hdr.Protocol)
-	p.bodyLength = int(hdr.BodyLength)
-	p.serial = hdr.Serial
+	p := &Message{
+		byteOrder:  msg.Endianness,
+		Type:       MessageType(hdr.Type),
+		Flags:      MessageFlag(hdr.Flags),
+		Protocol:   int(hdr.Protocol),
+		bodyLength: int(hdr.BodyLength),
+		serial:     hdr.Serial,
 
-	p.Path = string(flds.Path)
-	p.Iface = flds.Interface
-	p.Member = flds.Member
-	p.ErrorName = flds.ErrorName
-	p.replySerial = flds.ReplySerial
-	p.Dest = flds.Destination
-	// FIXME = flds.Sender
-	p.Sig = string(flds.Signature)
-	// FIXME = flds.NumFDs
+		Path:        string(flds.Path),
+		Iface:       flds.Interface,
+		Member:      flds.Member,
+		ErrorName:   flds.ErrorName,
+		replySerial: flds.ReplySerial,
+		Dest:        flds.Destination,
+		// FIXME:  flds.Sender
+		Sig: string(flds.Signature),
+		// FIXME:  flds.NumFDs
+	}
 
 	msg.Round(8)
-	idx := msg.Idx
-	if 0 < p.bodyLength {
-		p.Params, idx, _ = Parse(buff, p.Sig, idx)
-	}
-	return idx, nil
+	p.raw = data[msg.Idx:]
+	return p, nil
 }
 
-func _Unmarshal(buff []byte) (*Message, int, error) {
-	msg := NewMessage()
-	idx, e := msg._BufferToMessage(buff)
-	if e != nil {
-		return nil, 0, e
+func (p *Message) parseParams() (err error) {
+	if p.bodyLength > 0 {
+		p.Params, _, err = Parse(p.raw, p.Sig, 0)
 	}
-	return msg, idx, nil
+	return
+}
+
+func unmarshal(buff []byte) (*Message, error) {
+	msg, err := newRawMessage(buff)
+	if err != nil {
+		return msg, err
+	}
+	err = msg.parseParams()
+	return msg, err
 }
 
 func (p *Message) _Marshal() ([]byte, error) {
@@ -134,7 +144,7 @@ func (p *Message) _Marshal() ([]byte, error) {
 		ErrorName:   p.ErrorName,
 		ReplySerial: p.replySerial,
 		Destination: p.Dest,
-		Signature:   Signature(p.Sig),
+		Signature:   p.Sig,
 		// Sender, NumFDs
 	}
 

@@ -6,7 +6,7 @@ func TestUnmarshal(t *testing.T) {
 
 	teststr := "l\x01\x00\x01\x00\x00\x00\x00\x01\x00\x00\x00m\x00\x00\x00\x01\x01o\x00\x15\x00\x00\x00/org/freedesktop/DBus\x00\x00\x00\x02\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00\x03\x01s\x00\x05\x00\x00\x00Hello\x00\x00\x00\x06\x01s\x00\x14\x00\x00\x00org.freedesktop.DBus\x00\x00\x00\x00"
 
-	msg, _, e := _Unmarshal([]byte(teststr))
+	msg, e := unmarshal([]byte(teststr))
 	if nil != e {
 		t.Error("Unmarshal Failed")
 	}
@@ -70,7 +70,7 @@ func BenchmarkMessage_Unmarshal(b *testing.B) {
 
 	input := []byte(teststr)
 	for i := 0; i < b.N; i++ {
-		msg, _, err := _Unmarshal(input)
+		msg, err := unmarshal(input)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func BenchmarkMessage_Unmarshal2(b *testing.B) {
 
 	input := []byte(testMsg)
 	for i := 0; i < b.N; i++ {
-		msg, _, err := _Unmarshal(input)
+		msg, err := unmarshal(input)
 		if err != nil {
 			b.Fatal(err)
 		}

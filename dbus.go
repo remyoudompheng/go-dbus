@@ -344,7 +344,7 @@ func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
 
 	// Receive reply.
 	rawreply := <-replyChan
-	reply, _, err := _Unmarshal(rawreply)
+	reply, err := unmarshal(rawreply)
 	if err != nil {
 		return err
 	}

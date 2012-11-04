@@ -8,14 +8,14 @@ import (
 )
 
 func parseSig(s string) signature {
-      sig, rest, err := parseOneSignature(s)
-      if err != nil {
-            panic(err)
-      }
-      if rest != "" {
-            panic("trailing characters")
-      }
-      return sig
+	sig, rest, err := parseOneSignature(s)
+	if err != nil {
+		panic(err)
+	}
+	if rest != "" {
+		panic("trailing characters")
+	}
+	return sig
 }
 
 func TestAppendArray(t *testing.T) {
