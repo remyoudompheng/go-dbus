@@ -1,12 +1,21 @@
 package dbus
 
 import (
-	"bytes"
+	"bufio"
+	"encoding/binary"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"net"
 	"os"
 	"strings"
 )
+
+func init() {
+	// Set up logging for exceptional errors.
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+}
 
 type StandardBus int
 
@@ -100,13 +109,13 @@ type signalHandler struct {
 }
 
 type Connection struct {
-	addressMap        map[string]string
-	uniqName          string
-	methodCallReplies map[uint32](func(msg *Message))
-	signalMatchRules  []signalHandler
-	conn              net.Conn
-	buffer            *bytes.Buffer
-	proxy             *Interface
+	addressMap       map[string]string
+	uniqName         string
+	signalMatchRules []signalHandler
+	conn             net.Conn
+	proxy            *Interface
+	// reply channels.
+	replyChans map[uint32]chan<- []byte
 }
 
 type Object struct {
@@ -194,10 +203,9 @@ func Connect(busType StandardBus) (*Connection, error) {
 		return nil, err
 	}
 
-	bus.methodCallReplies = make(map[uint32]func(*Message))
+	bus.replyChans = make(map[uint32]chan<- []byte)
 	bus.signalMatchRules = make([]signalHandler, 0)
 	bus.proxy = bus._GetProxy()
-	bus.buffer = new(bytes.Buffer)
 	return bus, nil
 }
 
@@ -209,106 +217,144 @@ func (p *Connection) Authenticate() error {
 	if err != nil {
 		return err
 	}
-	go p._RunLoop()
+	go p.handleReplies()
 	p._SendHello()
 	return nil
 }
 
-func (p *Connection) _MessageReceiver(msgChan chan *Message) {
-	for {
-		p._FillBuffer()
-		msg, e := p._PopMessage()
-		if e == nil {
-			msgChan <- msg
-			continue // might be another msg in p.buffer
-		}
-	}
+type errMalformedEndianness byte
+
+func (e errMalformedEndianness) Error() string {
+	return fmt.Sprintf("unexpected endianness tag %q", byte(e))
 }
 
-func (p *Connection) _RunLoop() {
-	msgChan := make(chan *Message)
-	go p._MessageReceiver(msgChan)
-	for {
-		select {
-		case msg := <-msgChan:
-			p._MessageDispatch(msg)
-		}
-	}
+type errIncompleteMessage struct{ E error }
+
+func (e errIncompleteMessage) Error() string {
+	return fmt.Sprintf("incomplete message data: %s", e.E)
 }
 
-func (p *Connection) _MessageDispatch(msg *Message) {
-	if msg == nil {
+// handleReplies reads messages from the connection and dispatches
+// them to the client goroutines.
+func (p *Connection) handleReplies() error {
+	r := bufio.NewReader(p.conn)
+	for {
+		// Get message.
+		msg, replyTo, err := popMessage(r)
+		if err != nil {
+			return err
+		}
+		// Dispatch.
+		err = p.dispatch(replyTo, msg)
+		if err != nil {
+			log.Print(err)
+		}
+	}
+	panic("unreachable")
+}
+
+// constants for handmade header parsing.
+const (
+	msgOffsetType       = 1
+	msgOffsetBodySize   = 4
+	msgOffsetSerial     = 8
+	msgOffsetFieldsSize = 12
+)
+
+func popMessage(r *bufio.Reader) (msg []byte, serial uint32, err error) {
+	// Read message header.
+	header, err := r.Peek(16)
+	if err != nil {
+		return
+	}
+	order := binary.ByteOrder(nil)
+	switch header[0] {
+	case 'l':
+		order = binary.LittleEndian
+	case 'B':
+		order = binary.BigEndian
+	default:
+		err = errMalformedEndianness(header[0])
 		return
 	}
 
-	switch msg.Type {
+	// Determine length
+	bodySize := order.Uint32(header[msgOffsetBodySize : msgOffsetBodySize+4])
+	serial = order.Uint32(header[msgOffsetSerial : msgOffsetSerial+4])
+	fldSize := order.Uint32(header[msgOffsetFieldsSize : msgOffsetFieldsSize+4])
+	fldSize = (fldSize + 7) &^ 7 // pad.
+
+	// Read entire message.
+	msg = make([]byte, 16+fldSize+bodySize)
+	_, err = io.ReadFull(r, msg)
+	if err != nil {
+		err = errIncompleteMessage{err}
+		return
+	}
+
+	// Find reply serial.
+	decoder := &msgData{Endianness: order, Data: msg}
+	_, flds, _ := decoder.scanHeader()
+	return msg, flds.ReplySerial, nil
+}
+
+type errUnknownSerial uint32
+
+func (e errUnknownSerial) Error() string {
+	return fmt.Sprintf("message for unknown serial number %d", uint32(e))
+}
+
+// dispatch sends a raw message to the appropriate goroutine.
+func (p *Connection) dispatch(serial uint32, rawmsg []byte) error {
+	if serial == 0 {
+		return nil
+	}
+	ch := p.replyChans[serial]
+	delete(p.replyChans, serial)
+	if ch == nil {
+		return errUnknownSerial(serial)
+	}
+	ch <- rawmsg
+	return nil
+}
+
+// sendSync sends a message and synchronously waits fro the reply.
+func (p *Connection) sendSync(msg *Message, callback func(*Message)) error {
+	rawmsg, err := msg._Marshal()
+	if err != nil {
+		return err
+	}
+
+	// Prepare response channel.
+	seri := uint32(msg.serial)
+	replyChan := make(chan []byte, 1)
+	p.replyChans[seri] = replyChan
+	_, err = p.conn.Write(rawmsg)
+	if err != nil {
+		// kill connection.
+		p.conn.Close()
+		return err
+	}
+
+	// Receive reply.
+	rawreply := <-replyChan
+	reply, _, err := _Unmarshal(rawreply)
+	if err != nil {
+		return err
+	}
+	switch reply.Type {
 	case TypeMethodReturn:
-		rs := msg.replySerial
-		if replyFunc, ok := p.methodCallReplies[rs]; ok {
-			replyFunc(msg)
-			delete(p.methodCallReplies, rs)
-		}
+		callback(reply)
 	case TypeSignal:
 		for _, handler := range p.signalMatchRules {
-			if handler.mr._Match(msg) {
-				handler.proc(msg)
+			if handler.mr._Match(reply) {
+				handler.proc(reply)
 			}
 		}
 	case TypeError:
 		// TODO: actually handle error messages.
-		rs := msg.replySerial
-		if replyFunc, ok := p.methodCallReplies[rs]; ok {
-			replyFunc(msg)
-			delete(p.methodCallReplies, rs)
-		}
+		callback(reply)
 	}
-}
-
-func (p *Connection) _PopMessage() (*Message, error) {
-	msg, _, err := _Unmarshal(p.buffer.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	//	p.buffer.Read(make([]byte, n)) // remove first n bytes
-	p.buffer.Reset()
-	return msg, nil
-}
-
-func (p *Connection) _FillBuffer() error {
-	// Read header signature
-	headSig := make([]byte, 16)
-	n, e := p.conn.Read(headSig)
-	if n != 16 {
-		return e
-	}
-	// Calculate whole message length
-	bodyLength, _ := _GetInt32(headSig, 4)
-	arrayLength, _ := _GetInt32(headSig, 12)
-	headerLen := 16 + int(arrayLength)
-	pad := (headerLen+7)&^7 - headerLen
-	restOfMsg := make([]byte, pad+int(arrayLength)+int(bodyLength))
-	n, e = p.conn.Read(restOfMsg)
-
-	if n != len(restOfMsg) {
-		return e
-	}
-
-	p.buffer.Write(headSig)
-	p.buffer.Write(restOfMsg)
-	return e
-}
-
-func (p *Connection) _SendSync(msg *Message, callback func(*Message)) error {
-	seri := uint32(msg.serial)
-	recvChan := make(chan int)
-	p.methodCallReplies[seri] = func(rmsg *Message) {
-		callback(rmsg)
-		recvChan <- 0
-	}
-
-	buff, _ := msg._Marshal()
-	p.conn.Write(buff)
-	<-recvChan // synchronize
 	return nil
 }
 
@@ -329,7 +375,7 @@ func (p *Connection) _GetIntrospect(dest string, path string) Introspect {
 
 	var intro Introspect
 
-	p._SendSync(msg, func(reply *Message) {
+	p.sendSync(msg, func(reply *Message) {
 		if v, ok := reply.Params[0].(string); ok {
 			if i, err := NewIntrospect(v); err == nil {
 				intro = i
@@ -390,7 +436,7 @@ func (p *Connection) Call(method *Method, args ...interface{}) ([]interface{}, e
 	}
 
 	var ret []interface{}
-	p._SendSync(msg, func(reply *Message) {
+	p.sendSync(msg, func(reply *Message) {
 		ret = reply.Params
 	})
 
