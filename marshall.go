@@ -141,7 +141,7 @@ func appendArray(msg *msgData, align int, proc func(*msgData)) {
 	start := msg.Idx
 	proc(msg)
 	length := msg.Idx - start
-	msg.Endianness.PutUint32(msg.Data[start-4:start], uint32(length))
+	msg.ByteOrder.PutUint32(msg.Data[start-4:start], uint32(length))
 }
 
 func appendValue(msg *msgData, sig signature, val interface{}) (err error) {
@@ -189,19 +189,19 @@ func appendValue(msg *msgData, sig signature, val interface{}) (err error) {
 	case 's': // string
 		msg.Round(4)
 		s := val.(string)
-		msg.Endianness.PutUint32(buf[:4], uint32(len(s)))
+		msg.ByteOrder.PutUint32(buf[:4], uint32(len(s)))
 		msg.Put(buf[:4])
 		msg.PutString(s)
 		msg.Put(buf[4:5]) // NUL.
 
 	case 'u': // uint32
 		msg.Round(4)
-		msg.Endianness.PutUint32(buf[:4], val.(uint32))
+		msg.ByteOrder.PutUint32(buf[:4], val.(uint32))
 		msg.Put(buf[:4])
 
 	case 'i': // int32
 		msg.Round(4)
-		msg.Endianness.PutUint32(buf[:4], uint32(val.(int32)))
+		msg.ByteOrder.PutUint32(buf[:4], uint32(val.(int32)))
 		msg.Put(buf[:4])
 	default:
 		return fmt.Errorf("unsupported type %q", byte(sig))
@@ -233,7 +233,7 @@ func _GetVariant(buff []byte, index int) (vals []interface{}, retidx int, e erro
 }
 
 func Parse(buff []byte, sig string, index int) (slice []interface{}, bufIdx int, err error) {
-	msg := &msgData{Endianness: binary.LittleEndian, Data: buff, Idx: index}
+	msg := &msgData{ByteOrder: binary.LittleEndian, Data: buff, Idx: index}
 	sigs, err := parseSignature(sig)
 	if err != nil {
 		return
@@ -251,7 +251,7 @@ func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err err
 		case arraySig:
 			msg.Round(4)
 			// length in bytes.
-			l := msg.Endianness.Uint32(msg.Next(4))
+			l := msg.ByteOrder.Uint32(msg.Next(4))
 			end := msg.Idx + int(l)
 			tmpSlice := make([]interface{}, 0)
 			var arrValues []interface{}
@@ -277,7 +277,7 @@ func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err err
 		case dictSig:
 			msg.Round(4)
 			// length in bytes.
-			l := msg.Endianness.Uint32(msg.Next(4))
+			l := msg.ByteOrder.Uint32(msg.Next(4))
 			end := msg.Idx + int(l)
 			var dictVals []interface{}
 			elemsig := []signature{sig.Key, sig.Value}
@@ -297,7 +297,7 @@ func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err err
 		switch sig := sig.(basicSig); sig {
 		case 'b': // bool
 			msg.Round(4)
-			x := msg.Endianness.Uint32(msg.Next(4))
+			x := msg.ByteOrder.Uint32(msg.Next(4))
 			slice = append(slice, bool(x != 0))
 
 		case 'y': // byte
@@ -306,22 +306,22 @@ func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err err
 
 		case 'n': // int16
 			msg.Round(2)
-			x := msg.Endianness.Uint16(msg.Next(2))
+			x := msg.ByteOrder.Uint16(msg.Next(2))
 			slice = append(slice, int16(x))
 
 		case 'q': // uint16
 			msg.Round(2)
-			x := msg.Endianness.Uint16(msg.Next(2))
+			x := msg.ByteOrder.Uint16(msg.Next(2))
 			slice = append(slice, uint16(x))
 
 		case 'u': // uint32
 			msg.Round(4)
-			x := msg.Endianness.Uint32(msg.Next(4))
+			x := msg.ByteOrder.Uint32(msg.Next(4))
 			slice = append(slice, uint32(x))
 
 		case 's', 'o': // string, object
 			msg.Round(4)
-			l := msg.Endianness.Uint32(msg.Next(4))
+			l := msg.ByteOrder.Uint32(msg.Next(4))
 			s := msg.Next(int(l) + 1)
 			slice = append(slice, string(s[:l]))
 
@@ -350,7 +350,7 @@ func parseVariants(msg *msgData, sigs []signature) (slice []interface{}, err err
 // The D-Bus message header. A message consists of this and an array
 // of byte and variants.
 type msgHeader struct {
-	Endianness byte
+	ByteOrder  byte
 	Type       byte
 	Flags      byte
 	Protocol   byte
@@ -373,7 +373,7 @@ type msgHeaderFields struct {
 }
 
 type msgData struct {
-	Endianness binary.ByteOrder
+	ByteOrder binary.ByteOrder
 
 	Data []byte
 	Idx  int
@@ -429,7 +429,7 @@ func (msg *msgData) scanHeader() (hdr msgHeader, flds msgHeaderFields, err error
 	// Now an array of byte and variant.
 	fldVal := reflect.ValueOf(&flds).Elem()
 	msg.Round(4)
-	fldLen := msg.Endianness.Uint32(msg.Next(4))
+	fldLen := msg.ByteOrder.Uint32(msg.Next(4))
 	fldEnd := msg.Idx + int(fldLen)
 	for msg.Idx < fldEnd {
 		// A field is a struct byte + variant, hence aligned on 8 bytes.
@@ -474,7 +474,7 @@ func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) (err error) {
 		msg.putValue(fldSig, elem)
 	}
 	length := msg.Idx - fldStart
-	msg.Endianness.PutUint32(msg.Data[fldStart-4:fldStart], uint32(length))
+	msg.ByteOrder.PutUint32(msg.Data[fldStart-4:fldStart], uint32(length))
 	return nil
 }
 
@@ -526,7 +526,7 @@ func (msg *msgData) scanValue(sig signature, val reflect.Value) (err error) {
 	case arraySig:
 		msg.Round(4)
 		// length in bytes.
-		l := msg.Endianness.Uint32(msg.Next(4))
+		l := msg.ByteOrder.Uint32(msg.Next(4))
 		end := msg.Idx + int(l)
 		for msg.Idx < end {
 			elemval := reflect.New(val.Type().Elem()).Elem()
@@ -551,43 +551,43 @@ func (msg *msgData) scanValue(sig signature, val reflect.Value) (err error) {
 
 	case 'b': // bool
 		msg.Round(4)
-		x := msg.Endianness.Uint32(msg.Next(4))
+		x := msg.ByteOrder.Uint32(msg.Next(4))
 		val.SetBool(x != 0)
 
 	case 'n': // int16
 		msg.Round(2)
-		x := msg.Endianness.Uint16(msg.Next(2))
+		x := msg.ByteOrder.Uint16(msg.Next(2))
 		val.SetInt(int64(x))
 	case 'q': // uint16
 		msg.Round(2)
-		x := msg.Endianness.Uint16(msg.Next(2))
+		x := msg.ByteOrder.Uint16(msg.Next(2))
 		val.SetUint(uint64(x))
 
 	case 'i': // int32
 		msg.Round(4)
-		x := msg.Endianness.Uint32(msg.Next(4))
+		x := msg.ByteOrder.Uint32(msg.Next(4))
 		val.SetInt(int64(x))
 	case 'u': // uint32
 		msg.Round(4)
-		x := msg.Endianness.Uint32(msg.Next(4))
+		x := msg.ByteOrder.Uint32(msg.Next(4))
 		val.SetUint(uint64(x))
 
 	case 'x': // int64
 		msg.Round(8)
-		x := msg.Endianness.Uint64(msg.Next(8))
+		x := msg.ByteOrder.Uint64(msg.Next(8))
 		val.SetInt(int64(x))
 	case 't': // uint64
 		msg.Round(4)
-		x := msg.Endianness.Uint64(msg.Next(8))
+		x := msg.ByteOrder.Uint64(msg.Next(8))
 		val.SetUint(x)
 	case 'd': // double
 		msg.Round(8)
-		x := msg.Endianness.Uint64(msg.Next(8))
+		x := msg.ByteOrder.Uint64(msg.Next(8))
 		val.SetFloat(math.Float64frombits(x))
 
 	case 's', 'o': // string, object name
 		msg.Round(4)
-		l := msg.Endianness.Uint32(msg.Next(4))
+		l := msg.ByteOrder.Uint32(msg.Next(4))
 		s := msg.Next(int(l) + 1)
 		val.SetString(string(s[:l]))
 
@@ -622,7 +622,7 @@ func (msg *msgData) putValue(sig signature, val reflect.Value) (err error) {
 			msg.putValue(sig.Elem, elem)
 		}
 		length := msg.Idx - begin
-		msg.Endianness.PutUint32(msg.Data[idx:idx+4], uint32(length))
+		msg.ByteOrder.PutUint32(msg.Data[idx:idx+4], uint32(length))
 
 	case structSig:
 		msg.Round(8)
@@ -649,39 +649,39 @@ func (msg *msgData) putValue(sig signature, val reflect.Value) (err error) {
 
 	case 'n': // int16
 		msg.Round(2)
-		msg.Endianness.PutUint16(buf[:], uint16(val.Int()))
+		msg.ByteOrder.PutUint16(buf[:], uint16(val.Int()))
 		msg.Put(buf[:2])
 	case 'q': // uint16
 		msg.Round(2)
-		msg.Endianness.PutUint16(buf[:], uint16(val.Uint()))
+		msg.ByteOrder.PutUint16(buf[:], uint16(val.Uint()))
 		msg.Put(buf[:2])
 
 	case 'i': // int32
 		msg.Round(4)
-		msg.Endianness.PutUint32(buf[:], uint32(val.Int()))
+		msg.ByteOrder.PutUint32(buf[:], uint32(val.Int()))
 		msg.Put(buf[:4])
 	case 'u': // uint32
 		msg.Round(4)
-		msg.Endianness.PutUint32(buf[:], uint32(val.Uint()))
+		msg.ByteOrder.PutUint32(buf[:], uint32(val.Uint()))
 		msg.Put(buf[:4])
 
 	case 'x': // int64
 		msg.Round(8)
-		msg.Endianness.PutUint64(buf[:], uint64(val.Int()))
+		msg.ByteOrder.PutUint64(buf[:], uint64(val.Int()))
 		msg.Put(buf[:8])
 	case 't': // uint64
 		msg.Round(8)
-		msg.Endianness.PutUint64(buf[:], val.Uint())
+		msg.ByteOrder.PutUint64(buf[:], val.Uint())
 		msg.Put(buf[:8])
 	case 'd': // double
 		msg.Round(8)
-		msg.Endianness.PutUint64(buf[:], math.Float64bits(val.Float()))
+		msg.ByteOrder.PutUint64(buf[:], math.Float64bits(val.Float()))
 		msg.Put(buf[:8])
 
 	case 's', 'o': // string, object name
 		s := val.String()
 		msg.Round(4)
-		msg.Endianness.PutUint32(buf[:], uint32(len(s)))
+		msg.ByteOrder.PutUint32(buf[:], uint32(len(s)))
 		msg.Put(buf[:4])
 		msg.PutString(s)
 		msg.Put(buf[5:6]) // Nul byte.

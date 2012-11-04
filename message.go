@@ -78,9 +78,9 @@ func newRawMessage(data []byte) (*Message, error) {
 	msg := &msgData{Data: data, Idx: 0}
 	switch data[0] {
 	case 'l':
-		msg.Endianness = binary.LittleEndian
+		msg.ByteOrder = binary.LittleEndian
 	case 'B':
-		msg.Endianness = binary.BigEndian
+		msg.ByteOrder = binary.BigEndian
 	}
 	hdr, flds, err := msg.scanHeader()
 	if err != nil {
@@ -88,7 +88,7 @@ func newRawMessage(data []byte) (*Message, error) {
 	}
 
 	p := &Message{
-		byteOrder:  msg.Endianness,
+		byteOrder:  msg.ByteOrder,
 		Type:       MessageType(hdr.Type),
 		Flags:      MessageFlag(hdr.Flags),
 		Protocol:   int(hdr.Protocol),
@@ -130,10 +130,10 @@ func unmarshal(buff []byte) (*Message, error) {
 func (p *Message) _Marshal() ([]byte, error) {
 	b := make([]byte, 0, 8+len(p.Dest)+len(p.Path)+len(p.Iface)+len(p.Member))
 	hdr := msgHeader{
-		Endianness: 'l',
-		Type:       byte(p.Type),
-		Flags:      byte(p.Flags),
-		Protocol:   byte(p.Protocol),
+		ByteOrder: 'l',
+		Type:      byte(p.Type),
+		Flags:     byte(p.Flags),
+		Protocol:  byte(p.Protocol),
 		// Bodylength to fill later in buf[4:8]
 		Serial: uint32(p.serial),
 	}
@@ -149,16 +149,16 @@ func (p *Message) _Marshal() ([]byte, error) {
 	}
 
 	msg := &msgData{
-		Endianness: binary.LittleEndian,
-		Data:       b, Idx: 0}
+		ByteOrder: binary.LittleEndian,
+		Data:      b, Idx: 0}
 	err := msg.putHeader(hdr, flds)
 	if err != nil {
 		return nil, err
 	}
 
-	submsg := &msgData{Endianness: binary.LittleEndian}
+	submsg := &msgData{ByteOrder: binary.LittleEndian}
 	appendParamsData(submsg, p.Sig, p.Params)
-	msg.Endianness.PutUint32(msg.Data[4:8], uint32(len(submsg.Data)))
+	msg.ByteOrder.PutUint32(msg.Data[4:8], uint32(len(submsg.Data)))
 
 	msg.Round(8)
 	msg.Put(submsg.Data)
