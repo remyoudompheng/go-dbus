@@ -418,7 +418,7 @@ var fldSigs = []Signature{
 	9: "u",
 }
 
-func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) error {
+func (msg *msgData) putHeader(hdr msgHeader, flds msgHeaderFields) (err error) {
 	defer catchPanicErr(&err)
 	var buf [8]byte
 	msg.put("(yyyyuu)", hdr)
